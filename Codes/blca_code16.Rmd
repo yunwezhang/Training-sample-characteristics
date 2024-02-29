@@ -1,0 +1,1033 @@
+---
+title: "Stability selection for censored biomedical and bioinformatics data"
+author: "Yunwei Zhang"
+date: “`r paste0('Initiated on 20231109, compiled on ', format(Sys.time(), '%Y %b %d'))`”
+output:
+  
+  html_document:
+    code_folding: hide
+    fig_height: 8
+    fig_width: 12
+    highlight: tango
+    number_sections: yes
+    theme: cosmo
+    toc: yes
+    toc_depth: 4
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+    number_sections: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE,message = FALSE)
+#usethis::edit_r_environ()
+#R_MAX_VSIZE=700Gb
+```
+
+This file is to get results from the blca dataset. this file is a modification of code 13 for the blca data. 
+```{r}
+.libPaths("/dskh/nobackup/yunwei/stability_selection_codes/stability_selection_library")
+setwd("/dskh/nobackup/yunwei/stability_selection_codes")
+library(inline)
+openblas.set.num.threads <- cfunction( signature(ipt="integer"),
+                                       body = "openblas_set_num_threads(*ipt);",
+                                       otherdefs = c ("extern void openblas_set_num_threads(int);"),
+                                       libargs = c ("/usr/lib/x86_64-linux-gnu/openblas-pthread/libblas.so.3"),
+                                       language = "C",
+                                       convention = ".C"
+)
+openblas.set.num.threads(1)
+
+#install.packages("Matrix")
+#library(Matrix)
+library(survAUC)
+library(reshape2)
+library(ggplot2)
+library(readxl)
+library(ggpubr)
+library(dplyr)
+library(tidyverse)
+library(mstate)
+library(MASS)
+library(survival)
+library(MatchIt)
+library(mice)
+library(DT)
+library(EnvStats)
+library(pbmcapply)
+library(FNN)
+
+library(pec)
+library(MultiAssayExperiment)
+library(TCGAbiolinks)
+
+library(survivalROC)
+library(survival)
+#library(CoxBoost) #archrived package
+library(limma)
+library(survivalsvm)
+library(survminer)
+library(randomForestSRC)
+library(glmnet)
+library(rms)
+library(penalized)
+library(riskRegression)
+library(pROC)
+library(ROCR)
+library(cvTools)
+library(parallel)
+library(MTLR)
+library(icenReg)#was trying to get data (miceData), however, there is no covariates with that interval censored data
+library(mcsurvdata)
+library(ExperimentHub)
+library(hdnom)
+library(Hmisc)
+library(ggrepel)
+```
+
+```{r}
+source("functions.R")
+#auxilary selection functions
+
+stability_selection_fun1=function(i,data,ex_validation,timess){
+  set.seed(i)
+  updated_data=bootstrap_fun(data,i)
+  censoring_rate_train=table(updated_data[[1]]$status)[1]/(table(updated_data[[1]]$status)[1]+table(updated_data[[1]]$status)[2])
+  censoring_rate_test=table(updated_data[[2]]$status)[1]/(table(updated_data[[2]]$status)[1]+table(updated_data[[2]]$status)[2])
+  rr=lasso_feature_selection_withoutcal(updated_data,ex_validation,timess)
+  coeff=rr[[1]]
+  cindex=rr[[2]]
+  length_coef=rr[[3]]
+  bs=rr[[4]]
+  auc=rr[[5]]
+  distance_train=ks.test(updated_data[[1]]$time,data$time)
+  distance_test=ks.test(updated_data[[2]]$time,data$time)
+  lambda=rr[[16]]
+  npasses=rr[[17]]
+  devratio=rr[[18]]
+  cindex_train=rr[[19]]
+  bs_train=rr[[20]]
+  cindex_ex=rr[[21]]
+  bs_ex=rr[[22]]
+  auc_ex=rr[[23]]
+  auc_ex_all=c(unlist(rr[[24]]),unlist(rr[[25]]),unlist(rr[[26]]),unlist(rr[[27]]),unlist(rr[[28]]),unlist(rr[[29]]),unlist(rr[[30]]),unlist(rr[[31]]),unlist(rr[[32]]),unlist(rr[[33]]))
+  auc_te_all=c(unlist(rr[[6]]),unlist(rr[[7]]),unlist(rr[[8]]),unlist(rr[[9]]),unlist(rr[[10]]),unlist(rr[[11]]),unlist(rr[[12]]),unlist(rr[[13]]),unlist(rr[[14]]),unlist(rr[[15]]))
+  # cal_train=rr[[34]]
+  # cal_test=rr[[35]]
+  # cal_ex=rr[[36]]
+  # return(list(censoring_rate_train,coeff,cindex,length_coef,bs,auc,censoring_rate_test,distance_train,distance_test,lambda,npasses,devratio,cindex_train,bs_train,cindex_ex,bs_ex,auc_ex,auc_ex_all,auc_te_all,cal_train,cal_test,cal_ex))
+  return(list(censoring_rate_train,coeff,cindex,length_coef,bs,auc,censoring_rate_test,distance_train,distance_test,lambda,npasses,devratio,cindex_train,bs_train,cindex_ex,bs_ex,auc_ex,auc_ex_all,auc_te_all))
+}
+
+#write into one function to run in parallell
+stability_selection_fun2=function(i,data,ex_validation,timess,prob){
+  set.seed(i)
+  updated_data=bootstrap_fun2(data,i,desired_proportion_A=prob)
+  censoring_rate_train=table(updated_data[[1]]$status)[1]/(table(updated_data[[1]]$status)[1]+table(updated_data[[1]]$status)[2])
+  censoring_rate_test=table(updated_data[[2]]$status)[1]/(table(updated_data[[2]]$status)[1]+table(updated_data[[2]]$status)[2])
+  rr=lasso_feature_selection_withoutcal(updated_data,ex_validation,timess)
+  coeff=rr[[1]]
+  cindex=rr[[2]]
+  length_coef=rr[[3]]
+  bs=rr[[4]]
+  auc=rr[[5]]
+  distance_train=ks.test(updated_data[[1]]$time,data$time)
+  distance_test=ks.test(updated_data[[2]]$time,data$time)
+  lambda=rr[[16]]
+  npasses=rr[[17]]
+  devratio=rr[[18]]
+  cindex_train=rr[[19]]
+  bs_train=rr[[20]]
+  cindex_ex=rr[[21]]
+  bs_ex=rr[[22]]
+  auc_ex=rr[[23]]
+  auc_ex_all=c(unlist(rr[[24]]),unlist(rr[[25]]),unlist(rr[[26]]),unlist(rr[[27]]),unlist(rr[[28]]),unlist(rr[[29]]),unlist(rr[[30]]),unlist(rr[[31]]),unlist(rr[[32]]),unlist(rr[[33]]))
+  auc_te_all=c(unlist(rr[[6]]),unlist(rr[[7]]),unlist(rr[[8]]),unlist(rr[[9]]),unlist(rr[[10]]),unlist(rr[[11]]),unlist(rr[[12]]),unlist(rr[[13]]),unlist(rr[[14]]),unlist(rr[[15]]))
+  # cal_train=rr[[34]]
+  # cal_test=rr[[35]]
+  # cal_ex=rr[[36]]
+  # return(list(censoring_rate_train,coeff,cindex,length_coef,bs,auc,censoring_rate_test,distance_train,distance_test,lambda,npasses,devratio,cindex_train,bs_train,cindex_ex,bs_ex,auc_ex,auc_ex_all,auc_te_all,cal_train,cal_test,cal_ex))
+  return(list(censoring_rate_train,coeff,cindex,length_coef,bs,auc,censoring_rate_test,distance_train,distance_test,lambda,npasses,devratio,cindex_train,bs_train,cindex_ex,bs_ex,auc_ex,auc_ex_all,auc_te_all))
+}
+
+#write into one function to run in parallell
+stability_selection_fun3=purrr::possibly(function(i,data,ex_validation,timess,m_percentage){
+  set.seed(i)
+  updated_data=moutofn_bootstrap_fun4(data,i,m_percentage)
+  censoring_rate_train=table(updated_data[[1]]$status)[1]/(table(updated_data[[1]]$status)[1]+table(updated_data[[1]]$status)[2])
+  censoring_rate_test=table(updated_data[[2]]$status)[1]/(table(updated_data[[2]]$status)[1]+table(updated_data[[2]]$status)[2])
+  rr=lasso_feature_selection_withoutcal(updated_data,ex_validation,timess)
+  coeff=rr[[1]]
+  cindex=rr[[2]]
+  length_coef=rr[[3]]
+  bs=rr[[4]]
+  auc=rr[[5]]
+  distance_train=ks.test(updated_data[[1]]$time,data$time)
+  distance_test=ks.test(updated_data[[2]]$time,data$time)
+  lambda=rr[[16]]
+  npasses=rr[[17]]
+  devratio=rr[[18]]
+  cindex_train=rr[[19]]
+  bs_train=rr[[20]]
+  cindex_ex=rr[[21]]
+  bs_ex=rr[[22]]
+  auc_ex=rr[[23]]
+  auc_ex_all=c(unlist(rr[[24]]),unlist(rr[[25]]),unlist(rr[[26]]),unlist(rr[[27]]),unlist(rr[[28]]),unlist(rr[[29]]),unlist(rr[[30]]),unlist(rr[[31]]),unlist(rr[[32]]),unlist(rr[[33]]))
+  auc_te_all=c(unlist(rr[[6]]),unlist(rr[[7]]),unlist(rr[[8]]),unlist(rr[[9]]),unlist(rr[[10]]),unlist(rr[[11]]),unlist(rr[[12]]),unlist(rr[[13]]),unlist(rr[[14]]),unlist(rr[[15]]))
+ # cal_train=rr[[34]]
+ #  cal_test=rr[[35]]
+ #  cal_ex=rr[[36]]
+ #  return(list(censoring_rate_train,coeff,cindex,length_coef,bs,auc,censoring_rate_test,distance_train,distance_test,lambda,npasses,devratio,cindex_train,bs_train,cindex_ex,bs_ex,auc_ex,auc_ex_all,auc_te_all,cal_train,cal_test,cal_ex))
+  return(list(censoring_rate_train,coeff,cindex,length_coef,bs,auc,censoring_rate_test,distance_train,distance_test,lambda,npasses,devratio,cindex_train,bs_train,cindex_ex,bs_ex,auc_ex,auc_ex_all,auc_te_all))
+},otherwise = NA)
+
+stability_selection_fun4=purrr::possibly(function(i,data,ex_validation,timess,m_percentage){
+  set.seed(i)
+  updated_data=moutofn_bootstrap_fun_wr4(data,i,m_percentage)
+  censoring_rate_train=table(updated_data[[1]]$status)[1]/(table(updated_data[[1]]$status)[1]+table(updated_data[[1]]$status)[2])
+  censoring_rate_test=table(updated_data[[2]]$status)[1]/(table(updated_data[[2]]$status)[1]+table(updated_data[[2]]$status)[2])
+  rr=lasso_feature_selection_withoutcal(updated_data,ex_validation,timess)
+  coeff=rr[[1]]
+  cindex=rr[[2]]
+  length_coef=rr[[3]]
+  bs=rr[[4]]
+  auc=rr[[5]]
+  distance_train=ks.test(updated_data[[1]]$time,data$time)
+  distance_test=ks.test(updated_data[[2]]$time,data$time)
+  lambda=rr[[16]]
+  npasses=rr[[17]]
+  devratio=rr[[18]]
+  cindex_train=rr[[19]]
+  bs_train=rr[[20]]
+  cindex_ex=rr[[21]]
+  bs_ex=rr[[22]]
+  auc_ex=rr[[23]]
+  auc_ex_all=c(unlist(rr[[24]]),unlist(rr[[25]]),unlist(rr[[26]]),unlist(rr[[27]]),unlist(rr[[28]]),unlist(rr[[29]]),unlist(rr[[30]]),unlist(rr[[31]]),unlist(rr[[32]]),unlist(rr[[33]]))
+  auc_te_all=c(unlist(rr[[6]]),unlist(rr[[7]]),unlist(rr[[8]]),unlist(rr[[9]]),unlist(rr[[10]]),unlist(rr[[11]]),unlist(rr[[12]]),unlist(rr[[13]]),unlist(rr[[14]]),unlist(rr[[15]]))
+ # cal_train=rr[[34]]
+ #  cal_test=rr[[35]]
+ #  cal_ex=rr[[36]]
+ #  return(list(censoring_rate_train,coeff,cindex,length_coef,bs,auc,censoring_rate_test,distance_train,distance_test,lambda,npasses,devratio,cindex_train,bs_train,cindex_ex,bs_ex,auc_ex,auc_ex_all,auc_te_all,cal_train,cal_test,cal_ex))
+  return(list(censoring_rate_train,coeff,cindex,length_coef,bs,auc,censoring_rate_test,distance_train,distance_test,lambda,npasses,devratio,cindex_train,bs_train,cindex_ex,bs_ex,auc_ex,auc_ex_all,auc_te_all))
+},otherwise = NA)
+
+#without restriction
+#write into one function to run in parallell
+stability_selection_fun5=purrr::possibly(function(i,data,ex_validation,timess,m_percentage){
+  set.seed(i)
+  updated_data=moutofn_bootstrap_fun(data,i,m_percentage)
+  censoring_rate_train=table(updated_data[[1]]$status)[1]/(table(updated_data[[1]]$status)[1]+table(updated_data[[1]]$status)[2])
+  censoring_rate_test=table(updated_data[[2]]$status)[1]/(table(updated_data[[2]]$status)[1]+table(updated_data[[2]]$status)[2])
+  rr=lasso_feature_selection_withoutcal(updated_data,ex_validation,timess)
+  coeff=rr[[1]]
+  cindex=rr[[2]]
+  length_coef=rr[[3]]
+  bs=rr[[4]]
+  auc=rr[[5]]
+  distance_train=ks.test(updated_data[[1]]$time,data$time)
+  distance_test=ks.test(updated_data[[2]]$time,data$time)
+  lambda=rr[[16]]
+  npasses=rr[[17]]
+  devratio=rr[[18]]
+  cindex_train=rr[[19]]
+  bs_train=rr[[20]]
+  cindex_ex=rr[[21]]
+  bs_ex=rr[[22]]
+  auc_ex=rr[[23]]
+  auc_ex_all=c(unlist(rr[[24]]),unlist(rr[[25]]),unlist(rr[[26]]),unlist(rr[[27]]),unlist(rr[[28]]),unlist(rr[[29]]),unlist(rr[[30]]),unlist(rr[[31]]),unlist(rr[[32]]),unlist(rr[[33]]))
+  auc_te_all=c(unlist(rr[[6]]),unlist(rr[[7]]),unlist(rr[[8]]),unlist(rr[[9]]),unlist(rr[[10]]),unlist(rr[[11]]),unlist(rr[[12]]),unlist(rr[[13]]),unlist(rr[[14]]),unlist(rr[[15]]))
+ # cal_train=rr[[34]]
+ #  cal_test=rr[[35]]
+ #  cal_ex=rr[[36]]
+ #  return(list(censoring_rate_train,coeff,cindex,length_coef,bs,auc,censoring_rate_test,distance_train,distance_test,lambda,npasses,devratio,cindex_train,bs_train,cindex_ex,bs_ex,auc_ex,auc_ex_all,auc_te_all,cal_train,cal_test,cal_ex))
+  return(list(censoring_rate_train,coeff,cindex,length_coef,bs,auc,censoring_rate_test,distance_train,distance_test,lambda,npasses,devratio,cindex_train,bs_train,cindex_ex,bs_ex,auc_ex,auc_ex_all,auc_te_all))
+},otherwise = NA)
+
+stability_selection_fun6=purrr::possibly(function(i,data,ex_validation,timess,m_percentage){
+  set.seed(i)
+  updated_data=moutofn_bootstrap_fun_wr(data,i,m_percentage)
+  censoring_rate_train=table(updated_data[[1]]$status)[1]/(table(updated_data[[1]]$status)[1]+table(updated_data[[1]]$status)[2])
+  censoring_rate_test=table(updated_data[[2]]$status)[1]/(table(updated_data[[2]]$status)[1]+table(updated_data[[2]]$status)[2])
+  rr=lasso_feature_selection_withoutcal(updated_data,ex_validation,timess)
+  coeff=rr[[1]]
+  cindex=rr[[2]]
+  length_coef=rr[[3]]
+  bs=rr[[4]]
+  auc=rr[[5]]
+  distance_train=ks.test(updated_data[[1]]$time,data$time)
+  distance_test=ks.test(updated_data[[2]]$time,data$time)
+  lambda=rr[[16]]
+  npasses=rr[[17]]
+  devratio=rr[[18]]
+  cindex_train=rr[[19]]
+  bs_train=rr[[20]]
+  cindex_ex=rr[[21]]
+  bs_ex=rr[[22]]
+  auc_ex=rr[[23]]
+  auc_ex_all=c(unlist(rr[[24]]),unlist(rr[[25]]),unlist(rr[[26]]),unlist(rr[[27]]),unlist(rr[[28]]),unlist(rr[[29]]),unlist(rr[[30]]),unlist(rr[[31]]),unlist(rr[[32]]),unlist(rr[[33]]))
+  auc_te_all=c(unlist(rr[[6]]),unlist(rr[[7]]),unlist(rr[[8]]),unlist(rr[[9]]),unlist(rr[[10]]),unlist(rr[[11]]),unlist(rr[[12]]),unlist(rr[[13]]),unlist(rr[[14]]),unlist(rr[[15]]))
+ # cal_train=rr[[34]]
+ #  cal_test=rr[[35]]
+ #  cal_ex=rr[[36]]
+ #  return(list(censoring_rate_train,coeff,cindex,length_coef,bs,auc,censoring_rate_test,distance_train,distance_test,lambda,npasses,devratio,cindex_train,bs_train,cindex_ex,bs_ex,auc_ex,auc_ex_all,auc_te_all,cal_train,cal_test,cal_ex))
+  return(list(censoring_rate_train,coeff,cindex,length_coef,bs,auc,censoring_rate_test,distance_train,distance_test,lambda,npasses,devratio,cindex_train,bs_train,cindex_ex,bs_ex,auc_ex,auc_ex_all,auc_te_all))
+},otherwise = NA)
+
+#write into one function to run in parallell
+stability_selection_fun7=purrr::possibly(function(i,data,ex_validation,timess,prob){
+  set.seed(i)
+  updated_data=bootstrap_fun3(data,i,desired_proportion_A=prob)
+  censoring_rate_train=table(updated_data[[1]]$status)[1]/(table(updated_data[[1]]$status)[1]+table(updated_data[[1]]$status)[2])
+  censoring_rate_test=table(updated_data[[2]]$status)[1]/(table(updated_data[[2]]$status)[1]+table(updated_data[[2]]$status)[2])
+  updated_data_new1=updated_data[[1]]
+    updated_data_new1=updated_data_new1[,-which(colnames(updated_data_new1)=="control_var")]
+   updated_data_new2=updated_data[[2]]
+    updated_data_new2=updated_data_new2[,-which(colnames(updated_data_new2)=="control_var")] 
+  updated_data=list(updated_data_new1,updated_data_new2)
+  rr=lasso_feature_selection_withoutcal(updated_data,ex_validation,timess)
+  coeff=rr[[1]]
+  cindex=rr[[2]]
+  length_coef=rr[[3]]
+  bs=rr[[4]]
+  auc=rr[[5]]
+  distance_train=ks.test(updated_data[[1]]$time,data$time)
+  distance_test=ks.test(updated_data[[2]]$time,data$time)
+  lambda=rr[[16]]
+  npasses=rr[[17]]
+  devratio=rr[[18]]
+  cindex_train=rr[[19]]
+  bs_train=rr[[20]]
+  cindex_ex=rr[[21]]
+  bs_ex=rr[[22]]
+  auc_ex=rr[[23]]
+  auc_ex_all=c(unlist(rr[[24]]),unlist(rr[[25]]),unlist(rr[[26]]),unlist(rr[[27]]),unlist(rr[[28]]),unlist(rr[[29]]),unlist(rr[[30]]),unlist(rr[[31]]),unlist(rr[[32]]),unlist(rr[[33]]))
+  auc_te_all=c(unlist(rr[[6]]),unlist(rr[[7]]),unlist(rr[[8]]),unlist(rr[[9]]),unlist(rr[[10]]),unlist(rr[[11]]),unlist(rr[[12]]),unlist(rr[[13]]),unlist(rr[[14]]),unlist(rr[[15]]))
+  # cal_train=rr[[34]]
+  # cal_test=rr[[35]]
+  # cal_ex=rr[[36]]
+  # return(list(censoring_rate_train,coeff,cindex,length_coef,bs,auc,censoring_rate_test,distance_train,distance_test,lambda,npasses,devratio,cindex_train,bs_train,cindex_ex,bs_ex,auc_ex,auc_ex_all,auc_te_all,cal_train,cal_test,cal_ex))
+  return(list(censoring_rate_train,coeff,cindex,length_coef,bs,auc,censoring_rate_test,distance_train,distance_test,lambda,npasses,devratio,cindex_train,bs_train,cindex_ex,bs_ex,auc_ex,auc_ex_all,auc_te_all))
+},otherwise = NA)
+```
+
+
+# BLCA data
+```{r}
+current_data=read.csv("BLCA.csv")
+current_data2=current_data
+colnames(current_data2)[(dim(current_data2)[2]-2):dim(current_data2)[2]]=c("control_var","status","time")
+current_data2$time=as.numeric(current_data2$time)
+current_data2=current_data2[current_data2$time>0,]
+current_data2=current_data2[!is.na(current_data2$time),]
+dim(current_data)
+dim(current_data2)
+table(current_data2$control_var)
+current_data2$control_var=ifelse(current_data2$control_var=="FEMALE",0,1) #female is group0 as the proportion control
+set.seed(230720)
+rownum=sample(nrow(current_data2),nrow(current_data2)*0.2,replace = FALSE)
+ex_validation=current_data2[rownum,]
+current_data2=current_data2[-rownum,]
+dim(ex_validation)
+dim(current_data2)
+table(current_data2$status)
+summary(current_data2$time)
+#define the data with control_var to run the with control_var method
+current_data3=current_data2
+external_validation3=ex_validation
+dim(current_data3)
+dim(external_validation3)
+#get datasets do not include gender to run other methods
+current_data2=current_data2[,-which(colnames(current_data2)=="control_var")]
+ex_validation=ex_validation[,-which(colnames(ex_validation)=="control_var")]
+dim(ex_validation)
+dim(current_data2)
+```
+
+run results
+```{r eval=FALSE}
+timess=seq(as.numeric(summary(current_data2$time)[2]),as.numeric(summary(current_data2$time)[5]),(as.numeric(summary(current_data2$time)[5])-as.numeric(summary(current_data2$time)[2]))/9)
+
+#stability_selection_fun7(1,data=current_data3,prob=0.5,ex_validation=ex_validation,timess=timess)
+
+# result1new=pbmcapply::pbmclapply(1:500, stability_selection_fun7,data=current_data3,prob=0.2,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+# result2new=pbmcapply::pbmclapply(1:500, stability_selection_fun7,data=current_data3,prob=0.5,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+# result3new=pbmcapply::pbmclapply(1:500, stability_selection_fun7,data=current_data3,prob=0.7,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+# save(result1new,result2new,result3new,file="acc_gender.RData")
+
+#calibration error: Error in cut.default(pred_prob, quantile(pred_prob, seq(0, 1, 1/ngroup)),  : 
+# 'breaks' are not unique
+# this error is easy to fix but need their effort to fix, otherwise i need to overwrite their functions.
+
+
+#with replacement without control
+result1=pbmcapply::pbmclapply(1:500, stability_selection_fun6,data=current_data2,m_percentage=0.1,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result2=pbmcapply::pbmclapply(1:500, stability_selection_fun6,data=current_data2,m_percentage=0.2,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result3=pbmcapply::pbmclapply(1:500, stability_selection_fun6,data=current_data2,m_percentage=0.3,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result4=pbmcapply::pbmclapply(1:500, stability_selection_fun6,data=current_data2,m_percentage=0.4,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result5=pbmcapply::pbmclapply(1:500, stability_selection_fun6,data=current_data2,m_percentage=0.5,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result6=pbmcapply::pbmclapply(1:500, stability_selection_fun6,data=current_data2,m_percentage=0.6,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result7=pbmcapply::pbmclapply(1:500, stability_selection_fun6,data=current_data2,m_percentage=0.7,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result8=pbmcapply::pbmclapply(1:500, stability_selection_fun6,data=current_data2,m_percentage=0.8,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result9=pbmcapply::pbmclapply(1:500, stability_selection_fun6,data=current_data2,m_percentage=0.9,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result=pbmcapply::pbmclapply(1:500, stability_selection_fun1,data=current_data2,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+save(result,result1,result2,result3,result4,result5,result6,result7,result8,result9,file="blca_r.RData")
+
+#without replacement without control
+result1=pbmcapply::pbmclapply(1:500, stability_selection_fun5,data=current_data2,m_percentage=0.1,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result2=pbmcapply::pbmclapply(1:500, stability_selection_fun5,data=current_data2,m_percentage=0.2,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result3=pbmcapply::pbmclapply(1:500, stability_selection_fun5,data=current_data2,m_percentage=0.3,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result4=pbmcapply::pbmclapply(1:500, stability_selection_fun5,data=current_data2,m_percentage=0.4,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result5=pbmcapply::pbmclapply(1:500, stability_selection_fun5,data=current_data2,m_percentage=0.5,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result6=pbmcapply::pbmclapply(1:500, stability_selection_fun5,data=current_data2,m_percentage=0.6,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result7=pbmcapply::pbmclapply(1:500, stability_selection_fun5,data=current_data2,m_percentage=0.7,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result8=pbmcapply::pbmclapply(1:500, stability_selection_fun5,data=current_data2,m_percentage=0.8,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result9=pbmcapply::pbmclapply(1:500, stability_selection_fun5,data=current_data2,m_percentage=0.9,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+save(result1,result2,result3,result4,result5,result6,result7,result8,result9,file="blca.RData")
+
+
+#with replacement with control
+result1=pbmcapply::pbmclapply(1:500, stability_selection_fun4,data=current_data2,m_percentage=0.1,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result2=pbmcapply::pbmclapply(1:500, stability_selection_fun4,data=current_data2,m_percentage=0.2,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result3=pbmcapply::pbmclapply(1:500, stability_selection_fun4,data=current_data2,m_percentage=0.3,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result4=pbmcapply::pbmclapply(1:500, stability_selection_fun4,data=current_data2,m_percentage=0.4,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result5=pbmcapply::pbmclapply(1:500, stability_selection_fun4,data=current_data2,m_percentage=0.5,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result6=pbmcapply::pbmclapply(1:500, stability_selection_fun4,data=current_data2,m_percentage=0.6,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result7=pbmcapply::pbmclapply(1:500, stability_selection_fun4,data=current_data2,m_percentage=0.7,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result8=pbmcapply::pbmclapply(1:500, stability_selection_fun4,data=current_data2,m_percentage=0.8,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result9=pbmcapply::pbmclapply(1:500, stability_selection_fun4,data=current_data2,m_percentage=0.9,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result=pbmcapply::pbmclapply(1:500, stability_selection_fun1,data=current_data2,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+save(result,result1,result2,result3,result4,result5,result6,result7,result8,result9,file="blca_rc.RData")
+
+#without replacement with control
+result1=pbmcapply::pbmclapply(1:500, stability_selection_fun3,data=current_data2,m_percentage=0.1,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result2=pbmcapply::pbmclapply(1:500, stability_selection_fun3,data=current_data2,m_percentage=0.2,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result3=pbmcapply::pbmclapply(1:500, stability_selection_fun3,data=current_data2,m_percentage=0.3,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result4=pbmcapply::pbmclapply(1:500, stability_selection_fun3,data=current_data2,m_percentage=0.4,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result5=pbmcapply::pbmclapply(1:500, stability_selection_fun3,data=current_data2,m_percentage=0.5,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result6=pbmcapply::pbmclapply(1:500, stability_selection_fun3,data=current_data2,m_percentage=0.6,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result7=pbmcapply::pbmclapply(1:500, stability_selection_fun3,data=current_data2,m_percentage=0.7,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result8=pbmcapply::pbmclapply(1:500, stability_selection_fun3,data=current_data2,m_percentage=0.8,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result9=pbmcapply::pbmclapply(1:500, stability_selection_fun3,data=current_data2,m_percentage=0.9,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+save(result1,result2,result3,result4,result5,result6,result7,result8,result9,file="blca_c.RData")
+
+# censoring rate
+result1=pbmcapply::pbmclapply(1:500, stability_selection_fun2,data=current_data2,prob=0.1,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result2=pbmcapply::pbmclapply(1:500, stability_selection_fun2,data=current_data2,prob=0.2,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result3=pbmcapply::pbmclapply(1:500, stability_selection_fun2,data=current_data2,prob=0.3,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result4=pbmcapply::pbmclapply(1:500, stability_selection_fun2,data=current_data2,prob=0.4,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result5=pbmcapply::pbmclapply(1:500, stability_selection_fun2,data=current_data2,prob=0.5,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result6=pbmcapply::pbmclapply(1:500, stability_selection_fun2,data=current_data2,prob=0.6,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result7=pbmcapply::pbmclapply(1:500, stability_selection_fun2,data=current_data2,prob=0.7,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result8=pbmcapply::pbmclapply(1:500, stability_selection_fun2,data=current_data2,prob=0.8,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+result9=pbmcapply::pbmclapply(1:500, stability_selection_fun2,data=current_data2,prob=0.9,ex_validation=ex_validation,timess=timess,mc.cores = 15)
+save(result1,result2,result3,result4,result5,result6,result7,result8,result9,file="blca_censoring.RData")
+
+
+```
+
+
+```{r}
+#check the with replacement percentage of unique observations compared with the without
+check_percentage=function(data,m_percentage){
+  set.seed(20230824)
+  i=1
+  updated_data1=moutofn_bootstrap_fun(data,i,m_percentage)
+  updated_data2=moutofn_bootstrap_fun_wr(data,i,m_percentage)
+  sample1_tr=dim(as.data.frame(updated_data1[[1]])%>% distinct())[1]
+  sample1_te=dim(as.data.frame(updated_data1[[2]])%>% distinct())[1]
+  sample2_tr=dim(as.data.frame(updated_data2[[1]])%>% distinct())[1]
+  sample2_te=dim(as.data.frame(updated_data2[[2]])%>% distinct())[1]
+  return(c(sample1_tr,sample1_te,sample2_tr,sample2_te))
+}
+
+plotdt=cbind.data.frame(c("0.1_tr_without","0.1_tr_with","0.2_tr_without","0.2_tr_with","0.3_tr_without","0.3_tr_with","0.4_tr_without","0.4_tr_with","0.5_tr_without","0.5_tr_with","0.6_tr_without","0.6_tr_with","0.7_tr_without","0.7_tr_with","0.8_tr_without","0.8_tr_with","0.9_tr_without","0.9_tr_with","100%_tr_without","100%_tr_with"),c(check_percentage(current_data2,0.1)[c(1,3)],check_percentage(current_data2,0.2)[c(1,3)],check_percentage(current_data2,0.3)[c(1,3)],check_percentage(current_data2,0.4)[c(1,3)],check_percentage(current_data2,0.5)[c(1,3)],check_percentage(current_data2,0.6)[c(1,3)],check_percentage(current_data2,0.7)[c(1,3)],check_percentage(current_data2,0.8)[c(1,3)],check_percentage(current_data2,0.9)[c(1,3)],check_percentage(current_data2,1)[c(1,3)]),c(rep(c("without","with"),10)))
+colnames(plotdt)=c("sampling_technique_names","unique_observations","replacement_no_yes")
+plotdt$sampling_technique_names=sapply(strsplit(plotdt$sampling_technique_names,"_"), '[', 1)
+#reshape(plotdt, idvar = "sampling_technique_names", timevar = "replacement_no_yes", direction = "wide")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=unique_observations,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ylim(c(0,dim(current_data2)[1]))+geom_line()
+gg
+ggplot1=gg
+#ggsave("sampling_percentage_train_ovarian.pdf",gg,width = 8,height = 5)
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=unique_observations,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ylim(c(0,dim(current_data2)[1]))+geom_line()
+gg
+#ggsave("sampling_percentage_train_ovarian2.pdf",gg,width = 8,height = 5)
+ggplot2=gg
+
+
+
+
+other_table=function(result,data){
+  censoring_rate=c()
+  cindex=c()
+  num_variables=c()
+  brier_score=c()
+  auc=c()
+  distance_stat=c()
+  distance_p=c()
+  
+  censoring_rate_test=c()
+  distance_stat_test=c()
+  distance_p_test=c()
+  
+  lambda=c()
+  npasses=c()
+  devratio=c()
+  
+  cindex_train=c()
+  brier_score_train=c()
+  
+  cindex_ex=c()
+  brier_score_ex=c()
+  auc_ex=c()
+  
+  # auc_all_test=list()
+  # auc_all_ex=list()
+  for(i in 1:length(result)){
+    if(length(result[[i]])>1){
+    censoring_rate[i]=result[[i]][[1]]
+    cindex[i]=result[[i]][[3]]
+    num_variables[i]=result[[i]][[4]]/dim(data)[2]
+    brier_score[i]=result[[i]][[5]]
+    auc[i]=result[[i]][[6]]
+    distance_stat[i]=result[[i]][[8]]$statistic
+    distance_p[i]=result[[i]][[8]]$p.value
+    
+    censoring_rate_test[i]=result[[i]][[7]]
+    distance_stat_test[i]=result[[i]][[9]]$statistic
+    distance_p_test[i]=result[[i]][[9]]$p.value
+    lambda[i]=result[[i]][[10]]
+    npasses[i]=result[[i]][[11]]
+    devratio[i]=result[[i]][[12]]
+    
+    cindex_train[i]=result[[i]][[13]]
+    brier_score_train[i]=result[[i]][[14]]
+    
+    cindex_ex[i]=result[[i]][[15]]
+    brier_score_ex[i]=result[[i]][[16]]
+    auc_ex[i]=result[[i]][[17]]
+    
+    # auc_all_test[[i]]=result[[i]][[18]]
+    # auc_all_ex[[i]]=result[[i]][[19]]
+    
+    }else{
+    censoring_rate[i]=NA
+    cindex[i]=NA
+    num_variables[i]=NA
+    brier_score[i]=NA
+    auc[i]=NA
+    distance_stat[i]=NA
+    distance_p[i]=NA
+    censoring_rate_test[i]=NA
+  distance_stat_test[i]=NA
+  distance_p_test[i]=NA
+  lambda[i]=NA
+  npasses[i]=NA
+  devratio[i]=NA
+  cindex_train[i]=NA
+  brier_score_train[i]=NA
+  cindex_ex[i]=NA
+  brier_score_ex[i]=NA
+  auc_ex[i]=NA
+  
+  # auc_all_test[[i]]=NA
+  # auc_all_ex[[i]]=NA
+  }}
+  return(c(mean(censoring_rate,na.rm=TRUE),mean(num_variables,na.rm=TRUE),mean(cindex,na.rm=TRUE),mean(auc,na.rm=TRUE),mean(brier_score,na.rm=TRUE),mean(distance_stat,na.rm=TRUE),mean(distance_p,na.rm=TRUE),mean(censoring_rate_test,na.rm=TRUE),mean(distance_stat_test,na.rm=TRUE),mean(distance_p_test,na.rm=TRUE),mean(lambda,na.rm=TRUE),mean(npasses,na.rm=TRUE),mean(devratio,na.rm=TRUE),mean(cindex_train,na.rm=TRUE),mean(brier_score_train,na.rm=TRUE),mean(cindex_ex,na.rm=TRUE),mean(brier_score_ex,na.rm=TRUE),mean(auc_ex,na.rm=TRUE)))
+}
+
+load("blca_r.RData")
+result11=result1
+result12=result2
+result13=result3
+result14=result4
+result15=result5
+result16=result6
+result17=result7
+result18=result8
+result19=result9
+load("blca.RData")
+
+heatmap_data=data.frame(nrow=18*18,ncol=18)
+heatmap_data[1:324,1]=rep(c("m0.1","m0.2","m0.3","m0.4","m0.5","m0.6","m0.7","m0.8","m0.9","m0.1wr","m0.2wr","m0.3wr","m0.4wr","m0.5wr","m0.6wr","m0.7wr","m0.8wr","m0.9wr"),each=18)
+heatmap_data[1:324,2]=rep(c("censoring_rate","num_variables","cindex","auc","brier_score","distance_stat","distance_p","censoring_rate_test","distance_stat_test","distance_p_test","lambda","npasses","devratio","cindex_train","brier_score_train","cindex_ex","brier_score_ex","auc_ex"),18)
+heatmap_data[1:324,3]=c(other_table(result1,current_data2),other_table(result2,current_data2),other_table(result3,current_data2),other_table(result4,current_data2),other_table(result5,current_data2),other_table(result6,current_data2),other_table(result7,current_data2),other_table(result8,current_data2),other_table(result9,current_data2),other_table(result11,current_data2),other_table(result12,current_data2),other_table(result13,current_data2),other_table(result14,current_data2),other_table(result15,current_data2),other_table(result16,current_data2),other_table(result17,current_data2),other_table(result18,current_data2),other_table(result19,current_data2))
+colnames(heatmap_data)=c("case","metric","value")
+heatmap_data$metric=factor(heatmap_data$metric,levels = c("censoring_rate","num_variables","cindex","auc","brier_score","distance_stat","distance_p","censoring_rate_test","distance_stat_test","distance_p_test","lambda","npasses","devratio","cindex_train","brier_score_train","cindex_ex","brier_score_ex","auc_ex"))
+
+ovarian_result=heatmap_data
+
+
+other_table=function(result,data){
+  censoring_rate=c()
+  cindex=c()
+  num_variables=c()
+  brier_score=c()
+  auc=c()
+  distance_stat=c()
+  distance_p=c()
+  
+  censoring_rate_test=c()
+  distance_stat_test=c()
+  distance_p_test=c()
+  
+  lambda=c()
+  npasses=c()
+  devratio=c()
+  
+  cindex_train=c()
+  brier_score_train=c()
+  
+  cindex_ex=c()
+  brier_score_ex=c()
+  auc_ex=c()
+  
+  # auc_all_test=list()
+  # auc_all_ex=list()
+  for(i in 1:length(result)){
+    if(length(result[[i]])>1){
+    censoring_rate[i]=result[[i]][[1]]
+    cindex[i]=result[[i]][[3]]
+    num_variables[i]=result[[i]][[4]]/dim(data)[2]
+    brier_score[i]=result[[i]][[5]]
+    auc[i]=result[[i]][[6]]
+    distance_stat[i]=result[[i]][[8]]$statistic
+    distance_p[i]=result[[i]][[8]]$p.value
+    
+    censoring_rate_test[i]=result[[i]][[7]]
+    distance_stat_test[i]=result[[i]][[9]]$statistic
+    distance_p_test[i]=result[[i]][[9]]$p.value
+    lambda[i]=result[[i]][[10]]
+    npasses[i]=result[[i]][[11]]
+    devratio[i]=result[[i]][[12]]
+    
+    cindex_train[i]=result[[i]][[13]]
+    brier_score_train[i]=result[[i]][[14]]
+    
+    cindex_ex[i]=result[[i]][[15]]
+    brier_score_ex[i]=result[[i]][[16]]
+    auc_ex[i]=result[[i]][[17]]
+    
+    # auc_all_test[[i]]=result[[i]][[18]]
+    # auc_all_ex[[i]]=result[[i]][[19]]
+    
+    }else{
+    censoring_rate[i]=NA
+    cindex[i]=NA
+    num_variables[i]=NA
+    brier_score[i]=NA
+    auc[i]=NA
+    distance_stat[i]=NA
+    distance_p[i]=NA
+    censoring_rate_test[i]=NA
+  distance_stat_test[i]=NA
+  distance_p_test[i]=NA
+  lambda[i]=NA
+  npasses[i]=NA
+  devratio[i]=NA
+  cindex_train[i]=NA
+  brier_score_train[i]=NA
+  cindex_ex[i]=NA
+  brier_score_ex[i]=NA
+  auc_ex[i]=NA
+  
+  # auc_all_test[[i]]=NA
+  # auc_all_ex[[i]]=NA
+  }}
+  return(c(mean(censoring_rate,na.rm=TRUE),mean(num_variables,na.rm=TRUE),mean(cindex,na.rm=TRUE),mean(auc,na.rm=TRUE),mean(brier_score,na.rm=TRUE),mean(distance_stat,na.rm=TRUE),mean(distance_p,na.rm=TRUE),mean(censoring_rate_test,na.rm=TRUE),mean(distance_stat_test,na.rm=TRUE),mean(distance_p_test,na.rm=TRUE),mean(lambda,na.rm=TRUE),mean(npasses,na.rm=TRUE),mean(devratio,na.rm=TRUE),mean(cindex_train,na.rm=TRUE),mean(brier_score_train,na.rm=TRUE),mean(cindex_ex,na.rm=TRUE),mean(brier_score_ex,na.rm=TRUE),mean(auc_ex,na.rm=TRUE)))
+}
+
+
+load("blca_rc.RData")
+result11=result1
+result12=result2
+result13=result3
+result14=result4
+result15=result5
+result16=result6
+result17=result7
+result18=result8
+result19=result9
+load("blca_c.RData")
+
+heatmap_data=data.frame(nrow=18*18,ncol=18)
+heatmap_data[1:324,1]=rep(c("m0.1","m0.2","m0.3","m0.4","m0.5","m0.6","m0.7","m0.8","m0.9","m0.1wr","m0.2wr","m0.3wr","m0.4wr","m0.5wr","m0.6wr","m0.7wr","m0.8wr","m0.9wr"),each=18)
+heatmap_data[1:324,2]=rep(c("censoring_rate","num_variables","cindex","auc","brier_score","distance_stat","distance_p","censoring_rate_test","distance_stat_test","distance_p_test","lambda","npasses","devratio","cindex_train","brier_score_train","cindex_ex","brier_score_ex","auc_ex"),18)
+heatmap_data[1:324,3]=c(other_table(result1,current_data2),other_table(result2,current_data2),other_table(result3,current_data2),other_table(result4,current_data2),other_table(result5,current_data2),other_table(result6,current_data2),other_table(result7,current_data2),other_table(result8,current_data2),other_table(result9,current_data2),other_table(result11,current_data2),other_table(result12,current_data2),other_table(result13,current_data2),other_table(result14,current_data2),other_table(result15,current_data2),other_table(result16,current_data2),other_table(result17,current_data2),other_table(result18,current_data2),other_table(result19,current_data2))
+colnames(heatmap_data)=c("case","metric","value")
+heatmap_data$metric=factor(heatmap_data$metric,levels = c("censoring_rate","num_variables","cindex","auc","brier_score","distance_stat","distance_p","censoring_rate_test","distance_stat_test","distance_p_test","lambda","npasses","devratio","cindex_train","brier_score_train","cindex_ex","brier_score_ex","auc_ex"))
+
+ovarian_c_result=heatmap_data
+
+
+```
+
+# without control
+```{r}
+result=ovarian_result[1:(18*9),]
+r_result=ovarian_result[(18*9+1):dim(ovarian_result)[1],]
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="cindex","value"],r_result[r_result$metric=="cindex","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","cindex","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=cindex,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Testing C-index")
+# dt1=plotdt[plotdt$replacement_no_yes=="without",]
+# dt2=plotdt[plotdt$replacement_no_yes=="with",]
+# ggplot() +
+#   geom_point(data = dt1, aes(x = sampling_technique_names, y = C_index, color = replacement_no_yes)) +
+#   geom_point(data = dt2, aes(x = sampling_technique_names, y = C_index, color = replacement_no_yes)) +
+#   geom_curve()  +
+#   labs(title = "Connecting two groups of points with curves") +
+#   theme_minimal()
+ggplot3=gg
+
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="cindex_train","value"],r_result[r_result$metric=="cindex_train","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","cindex_train","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=cindex_train,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Training C-index")
+ggplot4=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="cindex_ex","value"],r_result[r_result$metric=="cindex_ex","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","cindex_ex","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=cindex_ex,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("External validation data C-index")
+ggplot5=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="brier_score","value"],r_result[r_result$metric=="brier_score","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","brier_score","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=brier_score,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Testing Brier Score")
+ggplot6=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="brier_score_train","value"],r_result[r_result$metric=="brier_score_train","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","brier_score_train","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=brier_score_train,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Training Brier Score")
+ggplot7=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="brier_score_ex","value"],r_result[r_result$metric=="brier_score_ex","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","brier_score_ex","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=brier_score_ex,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("External validation data Brier Score")
+ggplot8=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="censoring_rate","value"],r_result[r_result$metric=="censoring_rate","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","censoring_rate","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=censoring_rate,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Training censoring rate")
+ggplot9=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="censoring_rate_test","value"],r_result[r_result$metric=="censoring_rate_test","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","censoring_rate_test","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=censoring_rate_test,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Testing censoring rate")
+ggplot10=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="distance_stat","value"],r_result[r_result$metric=="distance_stat","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","distance_stat","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=distance_stat,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Training distance statistics")
+ggplot11=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="distance_stat_test","value"],r_result[r_result$metric=="distance_stat_test","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","distance_stat_test","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=distance_stat_test,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Testing distance statistics")
+ggplot12=gg
+
+finalgg=ggarrange(ggplot1,ggplot2,ggplot3,ggplot4,ggplot5,ggplot6,ggplot7,ggplot8,ggplot9,ggplot10,ggplot11,ggplot12,nrow=4,ncol = 3)
+ggsave("blca_all.pdf",finalgg,width=20,height = 20)
+```
+
+
+# with control
+```{r}
+result=ovarian_c_result[1:(18*9),]
+r_result=ovarian_c_result[(18*9+1):dim(ovarian_c_result)[1],]
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="cindex","value"],r_result[r_result$metric=="cindex","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","cindex","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=cindex,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Testing C-index")
+# dt1=plotdt[plotdt$replacement_no_yes=="without",]
+# dt2=plotdt[plotdt$replacement_no_yes=="with",]
+# ggplot() +
+#   geom_point(data = dt1, aes(x = sampling_technique_names, y = C_index, color = replacement_no_yes)) +
+#   geom_point(data = dt2, aes(x = sampling_technique_names, y = C_index, color = replacement_no_yes)) +
+#   geom_curve()  +
+#   labs(title = "Connecting two groups of points with curves") +
+#   theme_minimal()
+ggplot3=gg
+
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="cindex_train","value"],r_result[r_result$metric=="cindex_train","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","cindex_train","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=cindex_train,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Training C-index")
+ggplot4=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="cindex_ex","value"],r_result[r_result$metric=="cindex_ex","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","cindex_ex","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=cindex_ex,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("External validation data C-index")
+ggplot5=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="brier_score","value"],r_result[r_result$metric=="brier_score","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","brier_score","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=brier_score,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Testing Brier Score")
+ggplot6=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="brier_score_train","value"],r_result[r_result$metric=="brier_score_train","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","brier_score_train","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=brier_score_train,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Training Brier Score")
+ggplot7=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="brier_score_ex","value"],r_result[r_result$metric=="brier_score_ex","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","brier_score_ex","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=brier_score_ex,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("External validation data Brier Score")
+ggplot8=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="censoring_rate","value"],r_result[r_result$metric=="censoring_rate","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","censoring_rate","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=censoring_rate,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Training censoring rate")
+ggplot9=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="censoring_rate_test","value"],r_result[r_result$metric=="censoring_rate_test","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","censoring_rate_test","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=censoring_rate_test,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Testing censoring rate")
+ggplot10=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="distance_stat","value"],r_result[r_result$metric=="distance_stat","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","distance_stat","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=distance_stat,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Training distance statistics")
+ggplot11=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="distance_stat_test","value"],r_result[r_result$metric=="distance_stat_test","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","distance_stat_test","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=distance_stat_test,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Testing distance statistics")
+ggplot12=gg
+
+finalgg=ggarrange(ggplot1,ggplot2,ggplot3,ggplot4,ggplot5,ggplot6,ggplot7,ggplot8,ggplot9,ggplot10,ggplot11,ggplot12,nrow=4,ncol = 3)
+ggsave("blca_control_all.pdf",finalgg,width=20,height = 20)
+
+```
+
+save all organised with the same scale.
+```{r}
+result=ovarian_result[1:(18*9),]
+r_result=ovarian_result[(18*9+1):dim(ovarian_result)[1],]
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="cindex","value"],r_result[r_result$metric=="cindex","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","cindex","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=cindex,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Testing C-index")+ylim(c(0.6,1))
+# dt1=plotdt[plotdt$replacement_no_yes=="without",]
+# dt2=plotdt[plotdt$replacement_no_yes=="with",]
+# ggplot() +
+#   geom_point(data = dt1, aes(x = sampling_technique_names, y = C_index, color = replacement_no_yes)) +
+#   geom_point(data = dt2, aes(x = sampling_technique_names, y = C_index, color = replacement_no_yes)) +
+#   geom_curve()  +
+#   labs(title = "Connecting two groups of points with curves") +
+#   theme_minimal()
+gg3=gg
+
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="cindex_train","value"],r_result[r_result$metric=="cindex_train","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","cindex_train","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=cindex_train,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Training C-index")+ylim(c(0.25,0.65))
+gg1=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="cindex_ex","value"],r_result[r_result$metric=="cindex_ex","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","cindex_ex","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=cindex_ex,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("External validation data C-index")
+ggplot5=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="brier_score","value"],r_result[r_result$metric=="brier_score","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","brier_score","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=brier_score,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Testing Brier Score")+ylim(c(0.1,0.25))
+gg7=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="brier_score_train","value"],r_result[r_result$metric=="brier_score_train","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","brier_score_train","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=brier_score_train,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Training Brier Score")+ylim(c(0.35,0.55))
+gg5=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="brier_score_ex","value"],r_result[r_result$metric=="brier_score_ex","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","brier_score_ex","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=brier_score_ex,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("External validation data Brier Score")
+ggplot8=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="censoring_rate","value"],r_result[r_result$metric=="censoring_rate","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","censoring_rate","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=censoring_rate,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Training censoring rate")+ylim(c(0.5,0.7))
+gg9=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="censoring_rate_test","value"],r_result[r_result$metric=="censoring_rate_test","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","censoring_rate_test","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=censoring_rate_test,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Testing censoring rate")+ylim(c(0.5,0.7))
+gg11=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="distance_stat","value"],r_result[r_result$metric=="distance_stat","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","distance_stat","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=distance_stat,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Training distance statistics")+ylim(c(0,0.25))
+gg13=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="distance_stat_test","value"],r_result[r_result$metric=="distance_stat_test","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","distance_stat_test","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=distance_stat_test,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Testing distance statistics")+ylim(c(0,0.25))
+gg15=gg
+
+result=ovarian_c_result[1:(18*9),]
+r_result=ovarian_c_result[(18*9+1):dim(ovarian_c_result)[1],]
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="cindex","value"],r_result[r_result$metric=="cindex","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","cindex","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=cindex,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Testing C-index")+ylim(c(0.6,1))
+# dt1=plotdt[plotdt$replacement_no_yes=="without",]
+# dt2=plotdt[plotdt$replacement_no_yes=="with",]
+# ggplot() +
+#   geom_point(data = dt1, aes(x = sampling_technique_names, y = C_index, color = replacement_no_yes)) +
+#   geom_point(data = dt2, aes(x = sampling_technique_names, y = C_index, color = replacement_no_yes)) +
+#   geom_curve()  +
+#   labs(title = "Connecting two groups of points with curves") +
+#   theme_minimal()
+gg4=gg
+
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="cindex_train","value"],r_result[r_result$metric=="cindex_train","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","cindex_train","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=cindex_train,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Training C-index")+ylim(c(0.25,0.65))
+gg2=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="cindex_ex","value"],r_result[r_result$metric=="cindex_ex","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","cindex_ex","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=cindex_ex,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("External validation data C-index")
+ggplot5=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="brier_score","value"],r_result[r_result$metric=="brier_score","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","brier_score","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=brier_score,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Testing Brier Score")+ylim(c(0.1,0.25))
+gg8=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="brier_score_train","value"],r_result[r_result$metric=="brier_score_train","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","brier_score_train","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=brier_score_train,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Training Brier Score")+ylim(c(0.35,0.55))
+gg6=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="brier_score_ex","value"],r_result[r_result$metric=="brier_score_ex","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","brier_score_ex","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=brier_score_ex,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("External validation data Brier Score")
+ggplot8=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="censoring_rate","value"],r_result[r_result$metric=="censoring_rate","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","censoring_rate","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=censoring_rate,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Training censoring rate")+ylim(c(0.5,0.7))
+gg10=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="censoring_rate_test","value"],r_result[r_result$metric=="censoring_rate_test","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","censoring_rate_test","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=censoring_rate_test,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Testing censoring rate")+ylim(c(0.5,0.7))
+gg12=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="distance_stat","value"],r_result[r_result$metric=="distance_stat","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","distance_stat","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=distance_stat,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Training distance statistics")+ylim(c(0,0.25))
+gg14=gg
+
+plotdt=cbind.data.frame(c(c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9"),c("0.1","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9")),c(result[result$metric=="distance_stat_test","value"],r_result[r_result$metric=="distance_stat_test","value"]),c(rep("without",9),rep("with",9)))
+colnames(plotdt)=c("sampling_technique_names","distance_stat_test","replacement_no_yes")
+gg=ggplot(plotdt,aes(x=sampling_technique_names,y=distance_stat_test,color=replacement_no_yes,group=replacement_no_yes))+geom_point()+ theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+geom_line()+ggtitle("Testing distance statistics")+ylim(c(0,0.25))
+gg16=gg
+
+finalgg=ggarrange(gg1,gg2,gg3,gg4,gg5,gg6,gg7,gg8,gg9,gg10,gg11,gg12,gg13,gg14,gg15,gg16,nrow=4,ncol = 4)
+ggsave("blca_arranged.pdf",finalgg,width=25,height = 20)
+```
+
+
+Combinded results from all datasets
+```{r eval=FALSE}
+#
+blca_result=ovarian_result
+blca_c_result=ovarian_c_result
+#
+acc_result=ovarian_result
+acc_c_result=ovarian_c_result
+#
+load("brca_r.RData")
+result11=result1
+result12=result2
+result13=result3
+result14=result4
+result15=result5
+result16=result6
+result17=result7
+result18=result8
+result19=result9
+load("brca.RData")
+heatmap_data=data.frame(nrow=18*18,ncol=18)
+heatmap_data[1:324,1]=rep(c("m0.1","m0.2","m0.3","m0.4","m0.5","m0.6","m0.7","m0.8","m0.9","m0.1wr","m0.2wr","m0.3wr","m0.4wr","m0.5wr","m0.6wr","m0.7wr","m0.8wr","m0.9wr"),each=18)
+heatmap_data[1:324,2]=rep(c("censoring_rate","num_variables","cindex","auc","brier_score","distance_stat","distance_p","censoring_rate_test","distance_stat_test","distance_p_test","lambda","npasses","devratio","cindex_train","brier_score_train","cindex_ex","brier_score_ex","auc_ex"),18)
+heatmap_data[1:324,3]=c(other_table(result1,current_data2),other_table(result2,current_data2),other_table(result3,current_data2),other_table(result4,current_data2),other_table(result5,current_data2),other_table(result6,current_data2),other_table(result7,current_data2),other_table(result8,current_data2),other_table(result9,current_data2),other_table(result11,current_data2),other_table(result12,current_data2),other_table(result13,current_data2),other_table(result14,current_data2),other_table(result15,current_data2),other_table(result16,current_data2),other_table(result17,current_data2),other_table(result18,current_data2),other_table(result19,current_data2))
+colnames(heatmap_data)=c("case","metric","value")
+heatmap_data$metric=factor(heatmap_data$metric,levels = c("censoring_rate","num_variables","cindex","auc","brier_score","distance_stat","distance_p","censoring_rate_test","distance_stat_test","distance_p_test","lambda","npasses","devratio","cindex_train","brier_score_train","cindex_ex","brier_score_ex","auc_ex"))
+ovarian_result=heatmap_data
+
+load("brca_rc.RData")
+result11=result1
+result12=result2
+result13=result3
+result14=result4
+result15=result5
+result16=result6
+result17=result7
+result18=result8
+result19=result9
+load("brca_c.RData")
+heatmap_data=data.frame(nrow=18*18,ncol=18)
+heatmap_data[1:324,1]=rep(c("m0.1","m0.2","m0.3","m0.4","m0.5","m0.6","m0.7","m0.8","m0.9","m0.1wr","m0.2wr","m0.3wr","m0.4wr","m0.5wr","m0.6wr","m0.7wr","m0.8wr","m0.9wr"),each=18)
+heatmap_data[1:324,2]=rep(c("censoring_rate","num_variables","cindex","auc","brier_score","distance_stat","distance_p","censoring_rate_test","distance_stat_test","distance_p_test","lambda","npasses","devratio","cindex_train","brier_score_train","cindex_ex","brier_score_ex","auc_ex"),18)
+heatmap_data[1:324,3]=c(other_table(result1,current_data2),other_table(result2,current_data2),other_table(result3,current_data2),other_table(result4,current_data2),other_table(result5,current_data2),other_table(result6,current_data2),other_table(result7,current_data2),other_table(result8,current_data2),other_table(result9,current_data2),other_table(result11,current_data2),other_table(result12,current_data2),other_table(result13,current_data2),other_table(result14,current_data2),other_table(result15,current_data2),other_table(result16,current_data2),other_table(result17,current_data2),other_table(result18,current_data2),other_table(result19,current_data2))
+colnames(heatmap_data)=c("case","metric","value")
+heatmap_data$metric=factor(heatmap_data$metric,levels = c("censoring_rate","num_variables","cindex","auc","brier_score","distance_stat","distance_p","censoring_rate_test","distance_stat_test","distance_p_test","lambda","npasses","devratio","cindex_train","brier_score_train","cindex_ex","brier_score_ex","auc_ex"))
+ovarian_c_result=heatmap_data
+brca_result=ovarian_result
+brca_c_result=ovarian_c_result
+#
+ovarian_result=ovarian_result
+ovarian_c_result=ovarian_c_result
+
+save(blca_result,blca_c_result,acc_result,acc_c_result,brca_result,brca_c_result,ovarian_result,ovarian_c_result,file="all_result.RData")
+```
+
+```{r}
+load("all_result.RData")
+all_result_4=rbind.data.frame(blca_result,blca_c_result,acc_result,acc_c_result,brca_result,brca_c_result,ovarian_result,ovarian_c_result)
+all_result_4$category=c(rep("blca_result",nrow(blca_result)),rep("blca_c_result",nrow(blca_result)),rep("acc_result",nrow(acc_result)),rep("acc_c_result",nrow(acc_c_result)),rep("brca_result",nrow(brca_result)),rep("brca_c_result",nrow(brca_c_result)),rep("ovarian_result",nrow(ovarian_result)),rep("ovarian_c_result",nrow(ovarian_c_result)))
+all_result_4$control=c(rep("no",nrow(blca_result)),rep("yes",nrow(blca_result)),rep("no",nrow(acc_result)),rep("yes",nrow(acc_c_result)),rep("no",nrow(brca_result)),rep("yes",nrow(brca_c_result)),rep("no",nrow(ovarian_result)),rep("yes",nrow(ovarian_c_result)))
+
+heatmap_data=all_result_4[all_result_4$control=="no"&all_result_4$case%in%c("m0.3","m0.4","m0.5","m0.6")&all_result_4$metric%in%c("cindex_train","brier_score_train","censoring_rate","distance_stat"),]
+gg_heatmap_data=heatmap_data
+#gg_heatmap_data[gg_heatmap_data$metric=="brier_score","value"]=gg_heatmap_data[gg_heatmap_data$metric=="brier_score","value"]/max(gg_heatmap_data[gg_heatmap_data$metric=="brier_score","value"])
+gg_heatmap_data$name=paste(gg_heatmap_data$category,gg_heatmap_data$case,sep = "_")
+ggheatmap <-ggplot(gg_heatmap_data, aes(name, metric, fill= value)) + 
+ geom_tile(color = "grey")+scale_fill_gradientn(limits = c(0,1),colours = c("#2166AC", "#67A9CF" ,"#D1E5F0", "#FFFFFF","#FDDBC7", "#EF8A62", "#B2182B"))+ theme(aspect.ratio = 1, text = element_text(size = 15), legend.position = "bottom") + labs(y= 'Metrics', x = "Cases", fill = 'Values')+theme_bw()+theme(axis.text.x = element_text(color = "black", size = 15,angle = 90),axis.text.y = element_text(color = "black", size = 16))+
+  geom_text(aes(label = round(value,3)), color = "black", size = 4)
+ggheatmap
+
+heatmap_data=all_result_4[all_result_4$control=="no"&all_result_4$case%in%c("m0.2","m0.3","m0.4","m0.5","m0.6","m0.7","m0.8")&all_result_4$metric%in%c("cindex_train","brier_score_train","censoring_rate","distance_stat"),]
+gg_heatmap_data=heatmap_data
+#gg_heatmap_data[gg_heatmap_data$metric=="brier_score","value"]=gg_heatmap_data[gg_heatmap_data$metric=="brier_score","value"]/max(gg_heatmap_data[gg_heatmap_data$metric=="brier_score","value"])
+gg_heatmap_data$name=paste(gg_heatmap_data$category,gg_heatmap_data$case,sep = "_")
+ggheatmap <-ggplot(gg_heatmap_data, aes(name, metric, fill= value)) + 
+ geom_tile(color = "grey")+scale_fill_gradientn(limits = c(0,1),colours = c("#2166AC", "#67A9CF" ,"#D1E5F0", "#FFFFFF","#FDDBC7", "#EF8A62", "#B2182B"))+ theme(aspect.ratio = 1, text = element_text(size = 15), legend.position = "bottom") + labs(y= 'Metrics', x = "Cases", fill = 'Values')+theme_bw()+theme(axis.text.x = element_text(color = "black", size = 15,angle = 90),axis.text.y = element_text(color = "black", size = 16))+
+  geom_text(aes(label = round(value,3)), color = "black", size = 4)
+ggheatmap
+ggsave("all_variability_heatmap_train.pdf",ggheatmap,width=15,height=10)
+
+heatmap_data=all_result_4[all_result_4$control=="no"&all_result_4$case%in%c("m0.3","m0.4","m0.5","m0.6")&all_result_4$metric%in%c("cindex","brier_score","censoring_rate_test","distance_stat_test"),]
+gg_heatmap_data=heatmap_data
+#gg_heatmap_data[gg_heatmap_data$metric=="brier_score","value"]=gg_heatmap_data[gg_heatmap_data$metric=="brier_score","value"]/max(gg_heatmap_data[gg_heatmap_data$metric=="brier_score","value"])
+gg_heatmap_data$name=paste(gg_heatmap_data$category,gg_heatmap_data$case,sep = "_")
+ggheatmap <-ggplot(gg_heatmap_data, aes(name, metric, fill= value)) + 
+ geom_tile(color = "grey")+scale_fill_gradientn(limits = c(0,1),colours = c("#2166AC", "#67A9CF" ,"#D1E5F0", "#FFFFFF","#FDDBC7", "#EF8A62", "#B2182B"))+ theme(aspect.ratio = 1, text = element_text(size = 15), legend.position = "bottom") + labs(y= 'Metrics', x = "Cases", fill = 'Values')+theme_bw()+theme(axis.text.x = element_text(color = "black", size = 15,angle = 90),axis.text.y = element_text(color = "black", size = 16))+
+  geom_text(aes(label = round(value,3)), color = "black", size = 4)
+ggheatmap
+
+heatmap_data=all_result_4[all_result_4$control=="no"&all_result_4$case%in%c("m0.2","m0.3","m0.4","m0.5","m0.6","m0.7","m0.8")&all_result_4$metric%in%c("cindex","brier_score","censoring_rate_test","distance_stat_test"),]
+gg_heatmap_data=heatmap_data
+#gg_heatmap_data[gg_heatmap_data$metric=="brier_score","value"]=gg_heatmap_data[gg_heatmap_data$metric=="brier_score","value"]/max(gg_heatmap_data[gg_heatmap_data$metric=="brier_score","value"])
+gg_heatmap_data$name=paste(gg_heatmap_data$category,gg_heatmap_data$case,sep = "_")
+ggheatmap <-ggplot(gg_heatmap_data, aes(name, metric, fill= value)) + 
+ geom_tile(color = "grey")+scale_fill_gradientn(limits = c(0,1),colours = c("#2166AC", "#67A9CF" ,"#D1E5F0", "#FFFFFF","#FDDBC7", "#EF8A62", "#B2182B"))+ theme(aspect.ratio = 1, text = element_text(size = 15), legend.position = "bottom") + labs(y= 'Metrics', x = "Cases", fill = 'Values')+theme_bw()+theme(axis.text.x = element_text(color = "black", size = 15,angle = 90),axis.text.y = element_text(color = "black", size = 16))+
+  geom_text(aes(label = round(value,3)), color = "black", size = 4)
+ggheatmap
+ggsave("all_variability_heatmap_test.pdf",ggheatmap,width=15,height=10)
+```
+
+
