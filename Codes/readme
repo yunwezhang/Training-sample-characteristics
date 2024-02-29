@@ -1,1 +1,7 @@
 This folder contains all R scripts to run results. 
+
+Code 11 (file name: simulated_code11.rmd) contains simulated comics codes.
+Code 13 (file name: brca_code13.rmd) is the brca data related codes.
+Code 14 (file name: ovarian_code14.rmd) is the ovarian data related codes.
+Code 15 (file name: acc_code15.rmd) is the acc data related codes.
+Code 16 (file name: blca_code16.rmd) is the blca data related codes. 
