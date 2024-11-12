@@ -1,0 +1,675 @@
+---
+title: "Stability selection for censored biomedical and bioinformatics data"
+author: "Yunwei Zhang"
+date: “`r paste0('Initiated on 20231109, compiled on ', format(Sys.time(), '%Y %b %d'))`”
+output:
+  
+  html_document:
+    code_folding: hide
+    fig_height: 8
+    fig_width: 12
+    highlight: tango
+    number_sections: yes
+    theme: cosmo
+    toc: yes
+    toc_depth: 4
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+    number_sections: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE,message = FALSE)
+#usethis::edit_r_environ()
+#R_MAX_VSIZE=700Gb
+```
+
+This file is to get all figures for our manuscript. 
+
+```{r}
+library(survAUC)
+library(reshape2)
+library(ggplot2)
+library(readxl)
+library(ggpubr)
+library(dplyr)
+library(tidyverse)
+library(MASS)
+library(survival)
+library(DT)
+library(EnvStats)
+library(pbmcapply)
+library(pec)
+library(survivalROC)
+library(survival)
+library(survivalsvm)
+library(survminer)
+library(randomForestSRC)
+library(glmnet)
+library(rms)
+library(penalized)
+library(riskRegression)
+library(pROC)
+library(ROCR)
+library(cvTools)
+library(parallel)
+library(MTLR)
+library(hdnom)
+library(Hmisc)
+library(ggrepel)
+source("functions.R")
+```
+
+# Fig.1
+```{r}
+heatmapdt1=readRDS("simoics_result_data_with.RDS")
+prepared_add0.2wc=rbind.data.frame(c("m0.2","cindex",0.90130476),c("m0.2","brier_score",0.20729772),c("m0.2","cindex_train",0.85006374),c("m0.2","brier_score_train",0.27262705),c("m0.2","cindex_ex",0.90946852),c("m0.2","brier_score_ex",0.21973503))
+colnames(prepared_add0.2wc)=colnames(heatmapdt1)
+heatmapdt1=rbind.data.frame(heatmapdt1,prepared_add0.2wc)
+heatmapdt1$value=round(as.numeric(heatmapdt1$value),3)
+heatmapdt2=readRDS("simoics_result_data_without.RDS")
+prepared_add0.2=rbind.data.frame(c("m0.2","cindex",0.88678318),c("m0.2","brier_score",0.23109752),c("m0.2","cindex_train",0.78894869),c("m0.2","brier_score_train",0.30867087),c("m0.2","cindex_ex",0.89772648),c("m0.2","brier_score_ex",0.23793987))
+colnames(prepared_add0.2)=colnames(heatmapdt1)
+heatmapdt2=rbind.data.frame(heatmapdt2,prepared_add0.2)
+heatmapdt2$value=round(as.numeric(heatmapdt2$value),3)
+# heatmapdt1$name=rep("with_restriction",dim(heatmapdt1)[1])
+# heatmapdt2$name=rep("without_restriction",dim(heatmapdt2)[1])
+
+plotdt1=heatmapdt1[heatmapdt1$metric%in%c("cindex_train","brier_score_train")&heatmapdt1$case%in%c("m0.1","m0.2","m0.3","m0.5","m0.7"),]
+plotdt2=heatmapdt2[heatmapdt2$metric%in%c("cindex_train","brier_score_train")&heatmapdt2$case%in%c("m0.1","m0.2","m0.3","m0.5","m0.7"),]
+plotdt1=reshape(plotdt1,idvar="case",timevar="metric",direction = "wide")
+plotdt2=reshape(plotdt2,idvar="case",timevar="metric",direction = "wide")
+plotdt=rbind.data.frame(plotdt1,plotdt2)
+plotdt$name=c(rep("with_restriction",dim(plotdt1)[1]),rep("without_restriction",dim(plotdt2)[1]))
+gg=ggplot(plotdt,aes(x=value.brier_score_train,y=value.cindex_train,color=name,label=case))+geom_point()+geom_text_repel(size=4)  + theme_bw()+ggtitle("Prediction performances in train")+theme(aspect.ratio = 1)
+gg
+#ggsave("lasso_simomics_100compare_trainv2.pdf",gg)    
+
+plotdt1=heatmapdt1[heatmapdt1$metric%in%c("cindex","brier_score")&heatmapdt1$case%in%c("m0.1","m0.2","m0.3","m0.5","m0.7"),]
+plotdt2=heatmapdt2[heatmapdt2$metric%in%c("cindex","brier_score")&heatmapdt2$case%in%c("m0.1","m0.2","m0.3","m0.5","m0.7"),]
+plotdt1=reshape(plotdt1,idvar="case",timevar="metric",direction = "wide")
+plotdt2=reshape(plotdt2,idvar="case",timevar="metric",direction = "wide")
+plotdt=rbind.data.frame(plotdt1,plotdt2)
+plotdt$name=c(rep("with_restriction",dim(plotdt1)[1]),rep("without_restriction",dim(plotdt2)[1]))
+gg=ggplot(plotdt,aes(x=value.brier_score,y=value.cindex,color=name,label=case))+geom_point()+geom_text_repel(size=4)  + theme_bw()+ggtitle("Prediction performances in test")+theme(aspect.ratio = 1)
+gg
+#ggsave("lasso_simomics_100compare_testv2.pdf",gg)   
+
+plotdt1=heatmapdt1[heatmapdt1$metric%in%c("cindex_ex","brier_score_ex")&heatmapdt1$case%in%c("m0.1","m0.2","m0.3","m0.5","m0.7"),]
+plotdt2=heatmapdt2[heatmapdt2$metric%in%c("cindex_ex","brier_score_ex")&heatmapdt2$case%in%c("m0.1","m0.2","m0.3","m0.5","m0.7"),]
+plotdt1=reshape(plotdt1,idvar="case",timevar="metric",direction = "wide")
+plotdt2=reshape(plotdt2,idvar="case",timevar="metric",direction = "wide")
+plotdt=rbind.data.frame(plotdt1,plotdt2)
+plotdt$name=c(rep("with_restriction",dim(plotdt1)[1]),rep("without_restriction",dim(plotdt2)[1]))
+gg=ggplot(plotdt,aes(x=value.brier_score_ex,y=value.cindex_ex,color=name,label=case))+geom_point()+geom_text_repel(size=4)  + theme_bw()+ggtitle("Prediction performances in external data")+theme(aspect.ratio = 1)
+gg
+#ggsave("lasso_simomics_100compare_externalv2.pdf",gg)   
+```
+# Fig.2
+```{r}
+
+other_table=function(result,dim2){
+  censoring_rate=c()
+  cindex=c()
+  num_variables=c()
+  brier_score=c()
+  auc=c()
+  distance_stat=c()
+  distance_p=c()
+  
+  censoring_rate_test=c()
+  distance_stat_test=c()
+  distance_p_test=c()
+  
+  lambda=c()
+  npasses=c()
+  devratio=c()
+  
+  cindex_train=c()
+  brier_score_train=c()
+  
+  cindex_ex=c()
+  brier_score_ex=c()
+  auc_ex=c()
+  
+  # auc_all_test=list()
+  # auc_all_ex=list()
+  for(i in 1:length(result)){
+    if(length(result[[i]])>1){
+    censoring_rate[i]=result[[i]][[1]]
+    cindex[i]=result[[i]][[3]]
+    num_variables[i]=result[[i]][[4]]/dim2
+    brier_score[i]=result[[i]][[5]]
+    auc[i]=result[[i]][[6]]
+    distance_stat[i]=result[[i]][[8]]$statistic
+    distance_p[i]=result[[i]][[8]]$p.value
+    
+    censoring_rate_test[i]=result[[i]][[7]]
+    distance_stat_test[i]=result[[i]][[9]]$statistic
+    distance_p_test[i]=result[[i]][[9]]$p.value
+    lambda[i]=result[[i]][[10]]
+    npasses[i]=result[[i]][[11]]
+    devratio[i]=result[[i]][[12]]
+    
+    cindex_train[i]=result[[i]][[13]]
+    brier_score_train[i]=result[[i]][[14]]
+    
+    cindex_ex[i]=result[[i]][[15]]
+    brier_score_ex[i]=result[[i]][[16]]
+    auc_ex[i]=result[[i]][[17]]
+    
+    # auc_all_test[[i]]=result[[i]][[18]]
+    # auc_all_ex[[i]]=result[[i]][[19]]
+    
+    }else{
+    censoring_rate[i]=NA
+    cindex[i]=NA
+    num_variables[i]=NA
+    brier_score[i]=NA
+    auc[i]=NA
+    distance_stat[i]=NA
+    distance_p[i]=NA
+    censoring_rate_test[i]=NA
+  distance_stat_test[i]=NA
+  distance_p_test[i]=NA
+  lambda[i]=NA
+  npasses[i]=NA
+  devratio[i]=NA
+  cindex_train[i]=NA
+  brier_score_train[i]=NA
+  cindex_ex[i]=NA
+  brier_score_ex[i]=NA
+  auc_ex[i]=NA
+  
+  # auc_all_test[[i]]=NA
+  # auc_all_ex[[i]]=NA
+  }}
+  return(c(mean(censoring_rate,na.rm=TRUE),mean(num_variables,na.rm=TRUE),mean(cindex,na.rm=TRUE),mean(auc,na.rm=TRUE),mean(brier_score,na.rm=TRUE),mean(distance_stat,na.rm=TRUE),mean(distance_p,na.rm=TRUE),mean(censoring_rate_test,na.rm=TRUE),mean(distance_stat_test,na.rm=TRUE),mean(distance_p_test,na.rm=TRUE),mean(lambda,na.rm=TRUE),mean(npasses,na.rm=TRUE),mean(devratio,na.rm=TRUE),mean(cindex_train,na.rm=TRUE),mean(brier_score_train,na.rm=TRUE),mean(cindex_ex,na.rm=TRUE),mean(brier_score_ex,na.rm=TRUE),mean(auc_ex,na.rm=TRUE)))
+}
+
+load("blca_r.RData")
+result11=result1
+result12=result2
+result13=result3
+result14=result4
+result15=result5
+result16=result6
+result17=result7
+result18=result8
+result19=result9
+load("blca.RData")
+
+heatmap_data=data.frame(nrow=18*18,ncol=18)
+heatmap_data[1:324,1]=rep(c("m0.1","m0.2","m0.3","m0.4","m0.5","m0.6","m0.7","m0.8","m0.9","m0.1wr","m0.2wr","m0.3wr","m0.4wr","m0.5wr","m0.6wr","m0.7wr","m0.8wr","m0.9wr"),each=18)
+heatmap_data[1:324,2]=rep(c("censoring_rate","num_variables","cindex","auc","brier_score","distance_stat","distance_p","censoring_rate_test","distance_stat_test","distance_p_test","lambda","npasses","devratio","cindex_train","brier_score_train","cindex_ex","brier_score_ex","auc_ex"),18)
+dim2=20243
+heatmap_data[1:324,3]=c(other_table(result1,dim2),other_table(result2,dim2),other_table(result3,dim2),other_table(result4,dim2),other_table(result5,dim2),other_table(result6,dim2),other_table(result7,dim2),other_table(result8,dim2),other_table(result9,dim2),other_table(result11,dim2),other_table(result12,dim2),other_table(result13,dim2),other_table(result14,dim2),other_table(result15,dim2),other_table(result16,dim2),other_table(result17,dim2),other_table(result18,dim2),other_table(result19,dim2))
+colnames(heatmap_data)=c("case","metric","value")
+heatmap_data$metric=factor(heatmap_data$metric,levels = c("censoring_rate","num_variables","cindex","auc","brier_score","distance_stat","distance_p","censoring_rate_test","distance_stat_test","distance_p_test","lambda","npasses","devratio","cindex_train","brier_score_train","cindex_ex","brier_score_ex","auc_ex"))
+
+ovarian_result=heatmap_data
+
+
+other_table=function(result,dim2){
+  censoring_rate=c()
+  cindex=c()
+  num_variables=c()
+  brier_score=c()
+  auc=c()
+  distance_stat=c()
+  distance_p=c()
+  
+  censoring_rate_test=c()
+  distance_stat_test=c()
+  distance_p_test=c()
+  
+  lambda=c()
+  npasses=c()
+  devratio=c()
+  
+  cindex_train=c()
+  brier_score_train=c()
+  
+  cindex_ex=c()
+  brier_score_ex=c()
+  auc_ex=c()
+  
+  # auc_all_test=list()
+  # auc_all_ex=list()
+  for(i in 1:length(result)){
+    if(length(result[[i]])>1){
+    censoring_rate[i]=result[[i]][[1]]
+    cindex[i]=result[[i]][[3]]
+    num_variables[i]=result[[i]][[4]]/dim2
+    brier_score[i]=result[[i]][[5]]
+    auc[i]=result[[i]][[6]]
+    distance_stat[i]=result[[i]][[8]]$statistic
+    distance_p[i]=result[[i]][[8]]$p.value
+    
+    censoring_rate_test[i]=result[[i]][[7]]
+    distance_stat_test[i]=result[[i]][[9]]$statistic
+    distance_p_test[i]=result[[i]][[9]]$p.value
+    lambda[i]=result[[i]][[10]]
+    npasses[i]=result[[i]][[11]]
+    devratio[i]=result[[i]][[12]]
+    
+    cindex_train[i]=result[[i]][[13]]
+    brier_score_train[i]=result[[i]][[14]]
+    
+    cindex_ex[i]=result[[i]][[15]]
+    brier_score_ex[i]=result[[i]][[16]]
+    auc_ex[i]=result[[i]][[17]]
+    
+    # auc_all_test[[i]]=result[[i]][[18]]
+    # auc_all_ex[[i]]=result[[i]][[19]]
+    
+    }else{
+    censoring_rate[i]=NA
+    cindex[i]=NA
+    num_variables[i]=NA
+    brier_score[i]=NA
+    auc[i]=NA
+    distance_stat[i]=NA
+    distance_p[i]=NA
+    censoring_rate_test[i]=NA
+  distance_stat_test[i]=NA
+  distance_p_test[i]=NA
+  lambda[i]=NA
+  npasses[i]=NA
+  devratio[i]=NA
+  cindex_train[i]=NA
+  brier_score_train[i]=NA
+  cindex_ex[i]=NA
+  brier_score_ex[i]=NA
+  auc_ex[i]=NA
+  
+  # auc_all_test[[i]]=NA
+  # auc_all_ex[[i]]=NA
+  }}
+  return(c(mean(censoring_rate,na.rm=TRUE),mean(num_variables,na.rm=TRUE),mean(cindex,na.rm=TRUE),mean(auc,na.rm=TRUE),mean(brier_score,na.rm=TRUE),mean(distance_stat,na.rm=TRUE),mean(distance_p,na.rm=TRUE),mean(censoring_rate_test,na.rm=TRUE),mean(distance_stat_test,na.rm=TRUE),mean(distance_p_test,na.rm=TRUE),mean(lambda,na.rm=TRUE),mean(npasses,na.rm=TRUE),mean(devratio,na.rm=TRUE),mean(cindex_train,na.rm=TRUE),mean(brier_score_train,na.rm=TRUE),mean(cindex_ex,na.rm=TRUE),mean(brier_score_ex,na.rm=TRUE),mean(auc_ex,na.rm=TRUE)))
+}
+
+
+load("blca_rc.RData")
+result11=result1
+result12=result2
+result13=result3
+result14=result4
+result15=result5
+result16=result6
+result17=result7
+result18=result8
+result19=result9
+load("blca_c.RData")
+
+heatmap_data=data.frame(nrow=18*18,ncol=18)
+heatmap_data[1:324,1]=rep(c("m0.1","m0.2","m0.3","m0.4","m0.5","m0.6","m0.7","m0.8","m0.9","m0.1wr","m0.2wr","m0.3wr","m0.4wr","m0.5wr","m0.6wr","m0.7wr","m0.8wr","m0.9wr"),each=18)
+heatmap_data[1:324,2]=rep(c("censoring_rate","num_variables","cindex","auc","brier_score","distance_stat","distance_p","censoring_rate_test","distance_stat_test","distance_p_test","lambda","npasses","devratio","cindex_train","brier_score_train","cindex_ex","brier_score_ex","auc_ex"),18)
+heatmap_data[1:324,3]=c(other_table(result1,dim2),other_table(result2,dim2),other_table(result3,dim2),other_table(result4,dim2),other_table(result5,dim2),other_table(result6,dim2),other_table(result7,dim2),other_table(result8,dim2),other_table(result9,dim2),other_table(result11,dim2),other_table(result12,dim2),other_table(result13,dim2),other_table(result14,dim2),other_table(result15,dim2),other_table(result16,dim2),other_table(result17,dim2),other_table(result18,dim2),other_table(result19,dim2))
+colnames(heatmap_data)=c("case","metric","value")
+heatmap_data$metric=factor(heatmap_data$metric,levels = c("censoring_rate","num_variables","cindex","auc","brier_score","distance_stat","distance_p","censoring_rate_test","distance_stat_test","distance_p_test","lambda","npasses","devratio","cindex_train","brier_score_train","cindex_ex","brier_score_ex","auc_ex"))
+
+ovarian_c_result=heatmap_data
+
+
+```
+
+
+```{r}
+heatmapdt1=ovarian_c_result
+table(heatmapdt1$case)
+heatmapdt2=ovarian_result
+table(heatmapdt2$case)
+
+plotdt1=heatmapdt1[heatmapdt1$metric%in%c("cindex_train","brier_score_train")&heatmapdt1$case%in%c("m0.1","m0.2","m0.3","m0.5","m0.6","m0.7"),]
+plotdt2=heatmapdt2[heatmapdt2$metric%in%c("cindex_train","brier_score_train")&heatmapdt1$case%in%c("m0.1","m0.2","m0.3","m0.5","m0.6","m0.7"),]
+plotdt1=reshape(plotdt1,idvar="case",timevar="metric",direction = "wide")
+plotdt2=reshape(plotdt2,idvar="case",timevar="metric",direction = "wide")
+plotdt=rbind.data.frame(plotdt1,plotdt2)
+plotdt[,c(2,3)]=round(plotdt[,c(2,3)],3)
+plotdt$name=c(rep("with_restriction",dim(plotdt1)[1]),rep("without_restriction",dim(plotdt2)[1]))
+gg=ggplot(plotdt,aes(x=value.brier_score_train,y=value.cindex_train,color=name,label=case))+geom_point()+geom_text_repel(size=4)  + theme_bw()+ggtitle("Prediction performances in train")+theme(aspect.ratio = 1)
+gg
+#ggsave("blca_compare_train.pdf",gg)    
+
+plotdt1=heatmapdt1[heatmapdt1$metric%in%c("cindex","brier_score")&heatmapdt1$case%in%c("m0.1","m0.2","m0.3","m0.5","m0.6","m0.7"),]
+plotdt2=heatmapdt2[heatmapdt2$metric%in%c("cindex","brier_score")&heatmapdt1$case%in%c("m0.1","m0.2","m0.3","m0.5","m0.6","m0.7"),]
+plotdt1=reshape(plotdt1,idvar="case",timevar="metric",direction = "wide")
+plotdt2=reshape(plotdt2,idvar="case",timevar="metric",direction = "wide")
+plotdt=rbind.data.frame(plotdt1,plotdt2)
+plotdt[,c(2,3)]=round(plotdt[,c(2,3)],3)
+plotdt$name=c(rep("with_restriction",dim(plotdt1)[1]),rep("without_restriction",dim(plotdt2)[1]))
+gg=ggplot(plotdt,aes(x=value.brier_score,y=value.cindex,color=name,label=case))+geom_point()+geom_text_repel(size=4)  + theme_bw()+ggtitle("Prediction performances in test")+theme(aspect.ratio = 1)
+gg
+#ggsave("blca_compare_test.pdf",gg)   
+
+plotdt1=heatmapdt1[heatmapdt1$metric%in%c("cindex_ex","brier_score_ex")&heatmapdt1$case%in%c("m0.1","m0.2","m0.3","m0.5","m0.6","m0.7"),]
+plotdt2=heatmapdt2[heatmapdt2$metric%in%c("cindex_ex","brier_score_ex")&heatmapdt1$case%in%c("m0.1","m0.2","m0.3","m0.5","m0.6","m0.7"),]
+plotdt1=reshape(plotdt1,idvar="case",timevar="metric",direction = "wide")
+plotdt2=reshape(plotdt2,idvar="case",timevar="metric",direction = "wide")
+plotdt=rbind.data.frame(plotdt1,plotdt2)
+plotdt[,c(2,3)]=round(plotdt[,c(2,3)],3)
+plotdt$name=c(rep("with_restriction",dim(plotdt1)[1]),rep("without_restriction",dim(plotdt2)[1]))
+gg=ggplot(plotdt,aes(x=value.brier_score_ex,y=value.cindex_ex,color=name,label=case))+geom_point()+geom_text_repel(size=4)  + theme_bw()+ggtitle("Prediction performances in external data")+theme(aspect.ratio = 1)
+gg
+#ggsave("blca_compare_external.pdf",gg) 
+```
+# Fig.3 & Fig.8 (Fig.3 is part of Fig.8)
+
+```{r}
+current_data=read.csv("GSE49997_eset_processed.csv")
+current_data2=current_data[,-which(colnames(current_data)=="os_class")]
+dim(current_data)
+dim(current_data2)
+set.seed(230720)
+rownum=sample(nrow(current_data2),nrow(current_data2)*0.2,replace = FALSE)
+ex_validation=current_data2[rownum,]
+current_data2=current_data2[-rownum,]
+
+load("lasso_ovarian_check_without.RData")
+#get results table
+get_table=function(result){
+var=colnames(current_data2)[!colnames(current_data2)%in% c("time","status")]
+summary_coef=data.frame(matrix(nrow=length(var),ncol=1))
+rownames(summary_coef)=var
+coeff_all=c()
+for(i in 1:length(result)){
+  if(length(result[[i]])>1){
+  coeff_all=c(coeff_all,result[[i]][[2]])}else{coeff_all=c(coeff_all)}
+}
+coeff_all1=as.data.frame(table(coeff_all))
+colnames(coeff_all1)=c("name","freq")
+for(i in 1:length(var)){
+    summary_coef[i,1]=ifelse(var[i] %in% coeff_all1$name,coeff_all1[coeff_all1$name==var[i],"freq"],0)
+}
+return(list(coeff_all1,summary_coef))}
+
+result_table=get_table(result1)[[1]]
+result2_table=get_table(result2)[[1]]
+result3_table=get_table(result3)[[1]]
+result4_table=get_table(result4)[[1]]
+result5_table=get_table(result5)[[1]]
+result6_table=get_table(result6)[[1]]
+result7_table=get_table(result7)[[1]]
+result8_table=get_table(result8)[[1]]
+result9_table=get_table(result9)[[1]]
+result10_table=get_table(result11)[[1]]
+result11_table=get_table(result12)[[1]]
+result12_table=get_table(result13)[[1]]
+result13_table=get_table(result14)[[1]]
+result14_table=get_table(result15)[[1]]
+result15_table=get_table(result16)[[1]]
+result16_table=get_table(result17)[[1]]
+result17_table=get_table(result18)[[1]]
+result18_table=get_table(result19)[[1]]
+#get average model performances and number of variables selected
+# as.numeric(result[[1]][[1]])
+# result[[1]][[3]]
+# result[[1]][[4]]
+
+other_table=function(result,data){
+  censoring_rate=c()
+  cindex=c()
+  num_variables=c()
+  brier_score=c()
+  auc=c()
+  distance_stat=c()
+  distance_p=c()
+  
+  censoring_rate_test=c()
+  distance_stat_test=c()
+  distance_p_test=c()
+  
+  lambda=c()
+  npasses=c()
+  devratio=c()
+  
+  cindex_train=c()
+  brier_score_train=c()
+  
+  cindex_ex=c()
+  brier_score_ex=c()
+  auc_ex=c()
+  
+  # auc_all_test=list()
+  # auc_all_ex=list()
+  for(i in 1:length(result)){
+    if(length(result[[i]])>1){
+    censoring_rate[i]=result[[i]][[1]]
+    cindex[i]=result[[i]][[3]]
+    num_variables[i]=result[[i]][[4]]/dim(data)[2]
+    brier_score[i]=result[[i]][[5]]
+    auc[i]=result[[i]][[6]]
+    distance_stat[i]=result[[i]][[8]]$statistic
+    distance_p[i]=result[[i]][[8]]$p.value
+    
+    censoring_rate_test[i]=result[[i]][[7]]
+    distance_stat_test[i]=result[[i]][[9]]$statistic
+    distance_p_test[i]=result[[i]][[9]]$p.value
+    lambda[i]=result[[i]][[10]]
+    npasses[i]=result[[i]][[11]]
+    devratio[i]=result[[i]][[12]]
+    
+    cindex_train[i]=result[[i]][[13]]
+    brier_score_train[i]=result[[i]][[14]]
+    
+    cindex_ex[i]=result[[i]][[15]]
+    brier_score_ex[i]=result[[i]][[16]]
+    auc_ex[i]=result[[i]][[17]]
+    
+    # auc_all_test[[i]]=result[[i]][[18]]
+    # auc_all_ex[[i]]=result[[i]][[19]]
+    
+    }else{
+    censoring_rate[i]=NA
+    cindex[i]=NA
+    num_variables[i]=NA
+    brier_score[i]=NA
+    auc[i]=NA
+    distance_stat[i]=NA
+    distance_p[i]=NA
+    censoring_rate_test[i]=NA
+  distance_stat_test[i]=NA
+  distance_p_test[i]=NA
+  lambda[i]=NA
+  npasses[i]=NA
+  devratio[i]=NA
+  cindex_train[i]=NA
+  brier_score_train[i]=NA
+  cindex_ex[i]=NA
+  brier_score_ex[i]=NA
+  auc_ex[i]=NA
+  
+  # auc_all_test[[i]]=NA
+  # auc_all_ex[[i]]=NA
+  }}
+  return(c(mean(censoring_rate,na.rm=TRUE),mean(num_variables,na.rm=TRUE),mean(cindex,na.rm=TRUE),mean(auc,na.rm=TRUE),mean(brier_score,na.rm=TRUE),mean(distance_stat,na.rm=TRUE),mean(distance_p,na.rm=TRUE),mean(censoring_rate_test,na.rm=TRUE),mean(distance_stat_test,na.rm=TRUE),mean(distance_p_test,na.rm=TRUE),mean(lambda,na.rm=TRUE),mean(npasses,na.rm=TRUE),mean(devratio,na.rm=TRUE),mean(cindex_train,na.rm=TRUE),mean(brier_score_train,na.rm=TRUE),mean(cindex_ex,na.rm=TRUE),mean(brier_score_ex,na.rm=TRUE),mean(auc_ex,na.rm=TRUE)))
+}
+
+heatmap_data=data.frame(nrow=18*18,ncol=18)
+heatmap_data[1:324,1]=rep(c("m0.1","m0.2","m0.3","m0.4","m0.5","m0.6","m0.7","m0.8","m0.9","m0.1wr","m0.2wr","m0.3wr","m0.4wr","m0.5wr","m0.6wr","m0.7wr","m0.8wr","m0.9wr"),each=18)
+heatmap_data[1:324,2]=rep(c("censoring_rate","num_variables","cindex","auc","brier_score","distance_stat","distance_p","censoring_rate_test","distance_stat_test","distance_p_test","lambda","npasses","devratio","cindex_train","brier_score_train","cindex_ex","brier_score_ex","auc_ex"),18)
+heatmap_data[1:324,3]=c(other_table(result1,current_data2),other_table(result2,current_data2),other_table(result3,current_data2),other_table(result4,current_data2),other_table(result5,current_data2),other_table(result6,current_data2),other_table(result7,current_data2),other_table(result8,current_data2),other_table(result9,current_data2),other_table(result11,current_data2),other_table(result12,current_data2),other_table(result13,current_data2),other_table(result14,current_data2),other_table(result15,current_data2),other_table(result16,current_data2),other_table(result17,current_data2),other_table(result18,current_data2),other_table(result19,current_data2))
+colnames(heatmap_data)=c("case","metric","value")
+heatmap_data$metric=factor(heatmap_data$metric,levels = c("censoring_rate","num_variables","cindex","auc","brier_score","distance_stat","distance_p","censoring_rate_test","distance_stat_test","distance_p_test","lambda","npasses","devratio","cindex_train","brier_score_train","cindex_ex","brier_score_ex","auc_ex"))
+
+plotdt=heatmap_data[heatmap_data$metric%in%c("cindex_train","brier_score_train","censoring_rate","distance_stat"),]
+plotdt_wide=reshape(plotdt,idvar="metric",timevar="case",direction = "wide")
+plotdt_wide2=as.data.frame(t(plotdt_wide))
+colnames(plotdt_wide2)=plotdt_wide2[1,]
+plotdt_wide2=plotdt_wide2[-1,]
+plotdt_wide2=apply(plotdt_wide2, 2,as.numeric)
+plotdt_wide2=as.data.frame(round(plotdt_wide2,3))
+plotdt_wide2$label=c("m0.1","m0.2","m0.3","m0.4","m0.5","m0.6","m0.7","m0.8","m0.9","m0.1wr","m0.2wr","m0.3wr","m0.4wr","m0.5wr","m0.6wr","m0.7wr","m0.8wr","m0.9wr")
+gg=ggplot(plotdt_wide2,aes(x=brier_score_train,y=cindex_train,label=label,color=censoring_rate,size=distance_stat))+geom_point()+geom_text_repel(size=4)+ggtitle("Prediction performances in train")+theme_bw()
+gg
+#ggsave("lasso_ovarian_check_train.pdf",gg)
+
+plotdt=heatmap_data[heatmap_data$metric%in%c("cindex","brier_score","censoring_rate_test","distance_stat_test"),]
+plotdt_wide=reshape(plotdt,idvar="metric",timevar="case",direction = "wide")
+plotdt_wide2=as.data.frame(t(plotdt_wide))
+colnames(plotdt_wide2)=plotdt_wide2[1,]
+plotdt_wide2=plotdt_wide2[-1,]
+plotdt_wide2=apply(plotdt_wide2, 2,as.numeric)
+plotdt_wide2=as.data.frame(round(plotdt_wide2,3))
+plotdt_wide2$label=c("m0.1","m0.2","m0.3","m0.4","m0.5","m0.6","m0.7","m0.8","m0.9","m0.1wr","m0.2wr","m0.3wr","m0.4wr","m0.5wr","m0.6wr","m0.7wr","m0.8wr","m0.9wr")
+gg=ggplot(plotdt_wide2,aes(x=brier_score,y=cindex,label=label,color=censoring_rate_test,size=distance_stat_test))+geom_point()+geom_text_repel(size=4)+ggtitle("Prediction performances in test")+theme_bw()
+gg
+#ggsave("lasso_ovarian_check_test.pdf",gg)
+```
+# Fig. 4
+```{r}
+load("acc_with.RData")
+result_table=get_table(result)[[1]]
+result5_table=get_table(result5)[[1]]
+result6_table=get_table(result6)[[1]]
+result7_table=get_table(result7)[[1]]
+result11_table=get_table(result11)[[1]]
+result12_table=get_table(result12)[[1]]
+result13_table=get_table(result13)[[1]]
+result15_table=get_table(result15)[[1]]
+result16_table=get_table(result16)[[1]]
+result17_table=get_table(result17)[[1]]
+
+load("acc_gender.RData")
+result1new_table=get_table(result1new)[[1]]
+result2new_table=get_table(result2new)[[1]]
+result3new_table=get_table(result3new)[[1]]
+
+heatmap_data=data.frame(nrow=18*13,ncol=18)
+heatmap_data[1:(18*13),1]=rep(c("bootstrap","c0.4","c0.5","c0.6","m0.3","m0.5","m0.7","m0.3wr","m0.5wr","m0.7wr","0.2control","0.5control","0.7control"),each=18)
+heatmap_data[1:(18*13),2]=rep(c("censoring_rate","num_variables","cindex","auc","brier_score","distance_stat","distance_p","censoring_rate_test","distance_stat_test","distance_p_test","lambda","npasses","devratio","cindex_train","brier_score_train","cindex_ex","brier_score_ex","auc_ex"),13)
+heatmap_data[1:(18*13),3]=c(other_table(result,current_data2),other_table(result5,current_data2),other_table(result6,current_data2),other_table(result7,current_data2),other_table(result11,current_data2),other_table(result12,current_data2),other_table(result13,current_data2),other_table(result15,current_data2),other_table(result16,current_data2),other_table(result17,current_data2),other_table(result1new,current_data2),other_table(result2new,current_data2),other_table(result3new,current_data2))
+colnames(heatmap_data)=c("case","metric","value")
+heatmap_data$metric=factor(heatmap_data$metric,levels = c("censoring_rate","num_variables","cindex","auc","brier_score","distance_stat","distance_p","censoring_rate_test","distance_stat_test","distance_p_test","lambda","npasses","devratio","cindex_train","brier_score_train","cindex_ex","brier_score_ex","auc_ex"))
+
+acc_stratified=heatmap_data[heatmap_data$case%in%c("c0.4","c0.5","c0.6","0.2control","0.5control","0.7control"),]
+
+
+
+heatmap_data=acc_stratified
+plotdt=heatmap_data[heatmap_data$metric%in%c("cindex_train","brier_score_train","censoring_rate","distance_stat"),]
+plotdt_wide=reshape(plotdt,idvar="metric",timevar="case",direction = "wide")
+plotdt_wide2=as.data.frame(t(plotdt_wide))
+colnames(plotdt_wide2)=plotdt_wide2[1,]
+plotdt_wide2=plotdt_wide2[-1,]
+plotdt_wide2=apply(plotdt_wide2, 2,as.numeric)
+plotdt_wide2=as.data.frame(round(plotdt_wide2,3))
+plotdt_wide2$label=c("c0.4","c0.5","c0.6","0.2control","0.5control","0.7control")
+plotdt_wide2$group=c(rep("censoring rate",3),rep("control variable",3))
+gg=ggplot(plotdt_wide2,aes(x=brier_score_train,y=cindex_train,label=label,color=censoring_rate,size=distance_stat,group=group))+geom_point()+geom_text_repel(size=4)+ggtitle("Prediction performances in train")+theme_bw()+geom_line(lwd=0.5)
+gg
+#ggsave("lasso_acc_reduced_train.pdf",gg,width = 8,height = 8)
+
+plotdt=heatmap_data[heatmap_data$metric%in%c("cindex","brier_score","censoring_rate_test","distance_stat_test"),]
+plotdt_wide=reshape(plotdt,idvar="metric",timevar="case",direction = "wide")
+plotdt_wide2=as.data.frame(t(plotdt_wide))
+colnames(plotdt_wide2)=plotdt_wide2[1,]
+plotdt_wide2=plotdt_wide2[-1,]
+plotdt_wide2=apply(plotdt_wide2, 2,as.numeric)
+plotdt_wide2=as.data.frame(round(plotdt_wide2,3))
+plotdt_wide2$label=c("c0.4","c0.5","c0.6","0.2control","0.5control","0.7control")
+plotdt_wide2$group=c(rep("censoring rate",3),rep("control variable",3))
+gg=ggplot(plotdt_wide2,aes(x=brier_score,y=cindex,label=label,color=censoring_rate_test,size=distance_stat_test,group=group))+geom_point()+geom_text_repel(size=4)+ggtitle("Prediction performances in test")+theme_bw()+geom_line(lwd=0.5)
+gg
+#ggsave("lasso_acc_reduced_test.pdf",gg)
+
+plotdt=heatmap_data[heatmap_data$metric%in%c("cindex_ex","brier_score_ex"),]
+plotdt_wide=reshape(plotdt,idvar="metric",timevar="case",direction = "wide")
+plotdt_wide2=as.data.frame(t(plotdt_wide))
+colnames(plotdt_wide2)=plotdt_wide2[1,]
+plotdt_wide2=plotdt_wide2[-1,]
+plotdt_wide2=apply(plotdt_wide2, 2,as.numeric)
+plotdt_wide2=as.data.frame(round(plotdt_wide2,3))
+plotdt_wide2$label=c("c0.4","c0.5","c0.6","0.2control","0.5control","0.7control")
+plotdt_wide2$group=c(rep("censoring rate",3),rep("control variable",3))
+gg=ggplot(plotdt_wide2,aes(x=brier_score_ex,y=cindex_ex,label=label,group=group))+geom_point()+geom_text_repel(size=4)+ggtitle("Prediction performances in external data")+theme_bw()+geom_line(lwd=0.5)
+gg
+#ggsave("lasso_acc_reduced_external.pdf",gg)
+
+
+
+```
+# Fig. 5
+```{r}
+load("all_result.RData")
+all_result_4=rbind.data.frame(blca_result,blca_c_result,acc_result,acc_c_result,brca_result,brca_c_result,ovarian_result,ovarian_c_result)
+all_result_4$category=c(rep("blca_result",nrow(blca_result)),rep("blca_c_result",nrow(blca_result)),rep("acc_result",nrow(acc_result)),rep("acc_c_result",nrow(acc_c_result)),rep("brca_result",nrow(brca_result)),rep("brca_c_result",nrow(brca_c_result)),rep("ovarian_result",nrow(ovarian_result)),rep("ovarian_c_result",nrow(ovarian_c_result)))
+all_result_4$control=c(rep("no",nrow(blca_result)),rep("yes",nrow(blca_result)),rep("no",nrow(acc_result)),rep("yes",nrow(acc_c_result)),rep("no",nrow(brca_result)),rep("yes",nrow(brca_c_result)),rep("no",nrow(ovarian_result)),rep("yes",nrow(ovarian_c_result)))
+
+
+heatmap_data=all_result_4[all_result_4$control=="no"&all_result_4$case%in%c("m0.2","m0.3","m0.4","m0.5","m0.6","m0.7","m0.8")&all_result_4$metric%in%c("cindex_train","brier_score_train","censoring_rate","distance_stat"),]
+gg_heatmap_data=heatmap_data
+#gg_heatmap_data[gg_heatmap_data$metric=="brier_score","value"]=gg_heatmap_data[gg_heatmap_data$metric=="brier_score","value"]/max(gg_heatmap_data[gg_heatmap_data$metric=="brier_score","value"])
+gg_heatmap_data$name=paste(gg_heatmap_data$category,gg_heatmap_data$case,sep = "_")
+ggheatmap <-ggplot(gg_heatmap_data, aes(name, metric, fill= value)) + 
+ geom_tile(color = "grey")+scale_fill_gradientn(limits = c(0,1),colours = c("#2166AC", "#67A9CF" ,"#D1E5F0", "#FFFFFF","#FDDBC7", "#EF8A62", "#B2182B"))+ theme(aspect.ratio = 1, text = element_text(size = 15), legend.position = "bottom") + labs(y= 'Metrics', x = "Cases", fill = 'Values')+theme_bw()+theme(axis.text.x = element_text(color = "black", size = 15,angle = 90),axis.text.y = element_text(color = "black", size = 16))+
+  geom_text(aes(label = round(value,3)), color = "black", size = 4)
+ggheatmap
+#ggsave("all_variability_heatmap_train.pdf",ggheatmap,width=15,height=10)
+
+
+heatmap_data=all_result_4[all_result_4$control=="no"&all_result_4$case%in%c("m0.2","m0.3","m0.4","m0.5","m0.6","m0.7","m0.8")&all_result_4$metric%in%c("cindex","brier_score","censoring_rate_test","distance_stat_test"),]
+gg_heatmap_data=heatmap_data
+#gg_heatmap_data[gg_heatmap_data$metric=="brier_score","value"]=gg_heatmap_data[gg_heatmap_data$metric=="brier_score","value"]/max(gg_heatmap_data[gg_heatmap_data$metric=="brier_score","value"])
+gg_heatmap_data$name=paste(gg_heatmap_data$category,gg_heatmap_data$case,sep = "_")
+gg_heatmap_data$metric=factor(gg_heatmap_data$metric,levels=rev(c("brier_score","cindex","distance_stat_test","censoring_rate_test")))
+ggheatmap <-ggplot(gg_heatmap_data, aes(name, metric, fill= value)) + 
+ geom_tile(color = "grey")+scale_fill_gradientn(limits = c(0,1),colours = c("#2166AC", "#67A9CF" ,"#D1E5F0", "#FFFFFF","#FDDBC7", "#EF8A62", "#B2182B"))+ theme(aspect.ratio = 1, text = element_text(size = 15), legend.position = "bottom") + labs(y= 'Metrics', x = "Cases", fill = 'Values')+theme_bw()+theme(axis.text.x = element_text(color = "black", size = 15,angle = 90),axis.text.y = element_text(color = "black", size = 16))+
+  geom_text(aes(label = round(value,3)), color = "black", size = 4)
+ggheatmap
+#ggsave("all_variability_heatmap_test.pdf",ggheatmap,width=15,height=10)
+```
+
+# Fig.7
+```{r}
+heatmapdt1=readRDS("sim_blca_100_with_result.RDS")
+heatmapdt2=readRDS("sim_blca_100_without_result.RDS")
+# heatmapdt1$name=rep("with_restriction",dim(heatmapdt1)[1])
+# heatmapdt2$name=rep("without_restriction",dim(heatmapdt2)[1])
+
+
+plotdt1=heatmapdt1[heatmapdt1$metric%in%c("cindex_train","brier_score_train")&heatmapdt1$case%in%c("0.1","0.2","0.3","0.5","0.7"),]
+plotdt2=heatmapdt2[heatmapdt2$metric%in%c("cindex_train","brier_score_train")&heatmapdt1$case%in%c("0.1","0.2","0.3","0.5","0.7"),]
+plotdt1=reshape(plotdt1,idvar="case",timevar="metric",direction = "wide")
+plotdt2=reshape(plotdt2,idvar="case",timevar="metric",direction = "wide")
+plotdt=rbind.data.frame(plotdt1,plotdt2)
+plotdt$case=paste("m",plotdt$case,sep="")
+plotdt[,c(2,3)]=round(plotdt[,c(2,3)],3)
+plotdt$name=c(rep("with_restriction",dim(plotdt1)[1]),rep("without_restriction",dim(plotdt2)[1]))
+gg=ggplot(plotdt,aes(x=value.brier_score_train,y=value.cindex_train,color=name,label=case))+geom_point()+geom_text_repel(size=4)  + theme_bw()+ggtitle("Prediction performances in train")+theme(aspect.ratio = 1)
+gg
+#ggsave("simblca_100compare_train.pdf",gg)    
+
+plotdt1=heatmapdt1[heatmapdt1$metric%in%c("cindex","brier_score")&heatmapdt1$case%in%c("0.1","0.2","0.3","0.5","0.7"),]
+plotdt2=heatmapdt2[heatmapdt2$metric%in%c("cindex","brier_score")&heatmapdt1$case%in%c("0.1","0.2","0.3","0.5","0.7"),]
+plotdt1=reshape(plotdt1,idvar="case",timevar="metric",direction = "wide")
+plotdt2=reshape(plotdt2,idvar="case",timevar="metric",direction = "wide")
+plotdt=rbind.data.frame(plotdt1,plotdt2)
+plotdt$case=paste("m",plotdt$case,sep="")
+plotdt[,c(2,3)]=round(plotdt[,c(2,3)],3)
+plotdt$name=c(rep("with_restriction",dim(plotdt1)[1]),rep("without_restriction",dim(plotdt2)[1]))
+gg=ggplot(plotdt,aes(x=value.brier_score,y=value.cindex,color=name,label=case))+geom_point()+geom_text_repel(size=4)  + theme_bw()+ggtitle("Prediction performances in test")+theme(aspect.ratio = 1)
+gg
+#ggsave("simblca_100compare_test.pdf",gg)   
+
+plotdt1=heatmapdt1[heatmapdt1$metric%in%c("cindex_ex","brier_score_ex")&heatmapdt1$case%in%c("0.1","0.2","0.3","0.5","0.7"),]
+plotdt2=heatmapdt2[heatmapdt2$metric%in%c("cindex_ex","brier_score_ex")&heatmapdt1$case%in%c("0.1","0.2","0.3","0.5","0.7"),]
+plotdt1=reshape(plotdt1,idvar="case",timevar="metric",direction = "wide")
+plotdt2=reshape(plotdt2,idvar="case",timevar="metric",direction = "wide")
+plotdt=rbind.data.frame(plotdt1,plotdt2)
+plotdt$case=paste("m",plotdt$case,sep="")
+plotdt[,c(2,3)]=round(plotdt[,c(2,3)],3)
+plotdt$name=c(rep("with_restriction",dim(plotdt1)[1]),rep("without_restriction",dim(plotdt2)[1]))
+gg=ggplot(plotdt,aes(x=value.brier_score_ex,y=value.cindex_ex,color=name,label=case))+geom_point()+geom_text_repel(size=4)  + theme_bw()+ggtitle("Prediction performances in external data")+theme(aspect.ratio = 1)
+gg
+#ggsave("simblca_100compare_external.pdf",gg)  
+```
+
+
+
+
